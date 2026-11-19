@@ -28,17 +28,24 @@ ALLOWED_OPERATORS = frozenset({
     "$regex", "$regexMatch", "$date",
 }) | ALLOWED_STAGES
 
-# Business collections catalog fields
+# Business collections catalog fields (only queryable fields allowed)
 COLLECTION_CATALOG_FIELDS = {
     "orders": frozenset({
-        "_id", "id", "customer_name", "region", "status", "order_date", "total",
+        "_id", "id", "order_id", "customer_name", "region", "status", "order_date", "total",
         "items", "items.product_name", "items.category", "items.qty", "items.price",
+        "items_count", "currency",
     }),
-    "customers": frozenset({"_id", "id", "name", "city", "created_at"}),
-    "products": frozenset({"_id", "id", "name", "category", "price"}),
-    "invoices": frozenset({"_id", "id", "invoice_number", "invoice_date", "amount", "status"}),
+    "customers": frozenset({
+        "_id", "id", "customer_id", "name", "city", "region", "address", "postal_code", "status", "created_at",
+    }),
+    "products": frozenset({
+        "_id", "id", "product_id", "name", "sku", "category", "unit_price", "price", "description", "reorder_level",
+    }),
+    "invoices": frozenset({
+        "_id", "id", "invoice_number", "invoice_date", "due_date", "customer_name", "amount", "status", "paid_at", "currency",
+    }),
     "stock_levels": frozenset({
-        "_id", "id", "product_name", "warehouse_location", "quantity_on_hand", "reorder_threshold",
+        "_id", "id", "product_name", "warehouse_location", "quantity_on_hand", "reorder_threshold", "reorder_point", "unit", "last_counted_at",
     }),
 }
 

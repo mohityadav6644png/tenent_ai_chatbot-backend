@@ -84,6 +84,17 @@ class SchemaCatalogRepo:
         except Exception:
             pass
 
+        summaries = []
+        total_row_count = 0
+        try:
+            from app.modules.company.summary import get_tenant_summaries
+            summaries = await get_tenant_summaries(company_id)
+            total_row_count = sum(s.get("row_count", 0) for s in summaries)
+        except Exception:
+            pass
+
         catalog = dict(MONGO_BUSINESS_CATALOG)
         catalog["schema_version"] = schema_version
+        catalog["summaries"] = summaries
+        catalog["total_row_count"] = total_row_count
         return catalog

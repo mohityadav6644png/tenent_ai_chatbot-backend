@@ -44,6 +44,8 @@ def _inspect_tree(node: Any, collection_fields: Set[str], in_group_accum: bool =
             else:
                 if "company_id" in k:
                     raise SqlValidationFailedError("company_id is forbidden in query fields.")
+                if k in ("email", "phone"):
+                    raise SqlValidationFailedError(f"Field '{k}' is personal data and not queryable.")
             if k in ("$regex", "$regexMatch"):
                 if not isinstance(v, str) or len(v) > MAX_REGEX_LEN:
                     raise SqlValidationFailedError("Regex pattern must be a string literal of at most 40 characters.")
@@ -59,6 +61,8 @@ def _inspect_tree(node: Any, collection_fields: Set[str], in_group_accum: bool =
             f_ref = node[1:]
             if "company_id" in f_ref:
                 raise SqlValidationFailedError("Referencing company_id is forbidden.")
+            if f_ref in ("email", "phone") or f_ref.endswith(".email") or f_ref.endswith(".phone"):
+                raise SqlValidationFailedError(f"Referencing personal field '{f_ref}' is forbidden.")
 
 
 def validate_and_format_sql(

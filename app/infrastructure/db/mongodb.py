@@ -41,6 +41,7 @@ query_log_collection = database["query_log"]
 usage_counters_collection = database["usage_counters"]
 revoked_tokens_collection = database["revoked_tokens"]
 company_records_collection = database["company_records"]
+dataset_catalog_collection = database["dataset_catalog"]
 
 
 def get_business_collection(ctx: Any, name: str):

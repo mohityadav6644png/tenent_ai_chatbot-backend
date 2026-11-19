@@ -79,11 +79,13 @@ async def create_business_indexes():
     await db["stock_levels"].create_index([("company_id", ASCENDING), ("updated_at", DESCENDING)])
 
     # App database indexes for company_records and data_imports
+    await app_db["company_records"].create_index([("company_id", ASCENDING), ("title", "text"), ("content", "text")])
     await app_db["company_records"].create_index([("company_id", ASCENDING), ("created_at", DESCENDING)])
     await app_db["company_records"].create_index([("company_id", ASCENDING), ("import_id", ASCENDING)])
     await app_db["data_imports"].create_index([("company_id", ASCENDING), ("dataset", ASCENDING), ("status", ASCENDING)])
     await app_db["data_imports"].create_index([("company_id", ASCENDING), ("started_at", DESCENDING)])
     await app_db["data_imports"].create_index([("import_id", ASCENDING)], unique=True)
+    await app_db["dataset_catalog"].create_index([("company_id", ASCENDING), ("dataset", ASCENDING)], unique=True)
 
     print("Compound business and data import indexes created successfully.")
     await business_writer_client.close()

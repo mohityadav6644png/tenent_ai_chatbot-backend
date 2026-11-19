@@ -86,13 +86,28 @@ class Container:
         self.reports_repo = MongoReportsRepository()
         self.catalog_repo = SchemaCatalogRepo()
         self.cache = get_cache_client()
+        self.company_records_repo = MongoCompanyRecordsRepository()
+        self.data_ingestion_repo = MongoDataIngestionRepository()
+        self.data_import_repo = MongoDataImportRepository()
+        self.csv_parser = StandardCsvParser()
+
+        from app.infrastructure.db.record_search_repo import MongoRecordSearchRepository
+        from app.infrastructure.llm.answer_writer import LlmAnswerWriter
+
+        self.record_search_repo = MongoRecordSearchRepository()
+        self.answer_writer = LlmAnswerWriter()
 
         # Database and AI engines (MongoExecutor for MongoDB business collections)
         self.executor = MongoExecutor(
             max_rows=settings.MAX_ROWS, timeout_seconds=settings.QUERY_TIMEOUT_SECONDS
         )
         provider = settings.LLM_PROVIDER.lower().strip()
-        primary_gen = _build_generator_for_provider(provider)
+        if settings.QUERY_PLAN_ENABLED:
+            from app.infrastructure.llm.plan_generator import QueryPlanGenerator
+            primary_gen = QueryPlanGenerator(provider)
+        else:
+            primary_gen = _build_generator_for_provider(provider)
+
         fallback_provider = (settings.LLM_FALLBACK_PROVIDER or "").lower().strip()
         if fallback_provider:
             fallback_gen = _build_generator_for_provider(fallback_provider)
@@ -110,14 +125,12 @@ class Container:
             generator=self.generator,
             repo=self.chat_repo,
             cache=self.cache,
+            record_search_repo=self.record_search_repo,
+            answer_writer=self.answer_writer,
         )
         self.report_service = ReportService(
             repo=self.reports_repo, query_service=self.query_service
         )
-        self.company_records_repo = MongoCompanyRecordsRepository()
-        self.data_ingestion_repo = MongoDataIngestionRepository()
-        self.data_import_repo = MongoDataImportRepository()
-        self.csv_parser = StandardCsvParser()
         self.company_service = CompanyService(
             records_repo=self.company_records_repo,
             ingestion_repo=self.data_ingestion_repo,

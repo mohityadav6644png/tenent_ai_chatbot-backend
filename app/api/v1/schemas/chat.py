@@ -34,6 +34,7 @@ class ChatAnswerPayload(BaseModel):
 class ChatMetaPayload(BaseModel):
     latency_ms: int
     cache: Literal["hit", "miss"]
+    source: Optional[str] = None
 
 
 class ChatErrorPayload(BaseModel):

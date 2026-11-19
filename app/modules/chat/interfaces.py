@@ -35,3 +35,16 @@ class ChatRepoProtocol(Protocol):
     async def list_user_conversations(self, user_id: str, company_id: str) -> List[Dict[str, Any]]: ...
     async def save_feedback(self, message_id: str, user_id: str, helpful: bool) -> None: ...
     async def get_schema_catalog(self, company_id: str) -> Dict[str, Any]: ...
+
+
+class RecordSearchRepository(Protocol):
+    async def search_records(
+        self, company_id: str, query: str, limit: int = 3, min_score: float = 0.5
+    ) -> List[Dict[str, Any]]: ...
+
+
+class AnswerWriterProtocol(Protocol):
+    async def write_answer(
+        self, question: str, columns: List[Dict[str, str]], rows: List[List[Any]]
+    ) -> Optional[str]: ...
+

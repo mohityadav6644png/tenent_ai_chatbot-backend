@@ -118,6 +118,13 @@ class GeminiQueryGenerator:
         if usage_tokens > 0:
             await record_tenant_token_usage(company_id, usage_tokens)
 
+        # Ensure $project is the final stage if followed only by $limit
+        query_spec = parsed.get("query")
+        if isinstance(query_spec, dict) and isinstance(query_spec.get("pipeline"), list):
+            pipe = query_spec["pipeline"]
+            if len(pipe) >= 2 and isinstance(pipe[-1], dict) and "$limit" in pipe[-1] and isinstance(pipe[-2], dict) and "$project" in pipe[-2]:
+                pipe[-1], pipe[-2] = pipe[-2], pipe[-1]
+
         return parsed
 
     async def _call_with_retries(

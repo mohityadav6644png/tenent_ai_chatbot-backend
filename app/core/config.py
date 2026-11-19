@@ -75,8 +75,10 @@ class Settings(BaseSettings):
     LLM_API_KEY: Optional[SecretStr] = None
     LLM_MODEL: Optional[str] = None
     LLM_TIMEOUT_SECONDS: float = 20.0
-    LLM_MAX_OUTPUT_TOKENS: int = 2048
+    LLM_MAX_OUTPUT_TOKENS: int = 1024
     LLM_TEMPERATURE: float = 0.0
+    LLM_MODEL_PRIMARY_SMALL: Optional[str] = None
+    LLM_ESCALATE_ON_FAILURE: bool = False
 
     # Email Service
     EMAIL_BACKEND: str = "console"  # "console" | "acs" | "smtp"
@@ -111,6 +113,15 @@ class Settings(BaseSettings):
     IMPORT_MAX_PER_HOUR: int = 10
     DATASET_STALE_DAYS: int = 30
     IMPORT_PREVIEW_ERRORS: int = 500
+
+    # Structured Query Plan & Text Search
+    QUERY_PLAN_ENABLED: bool = True
+    QUERY_PLAN_MAX_LIMIT: int = 50
+    TEXT_SEARCH_FALLBACK_ENABLED: bool = True
+    TEXT_SEARCH_MAX_RESULTS: int = 3
+    TEXT_SEARCH_SNIPPET_CHARS: int = 600
+    ANSWER_WRITER_ENABLED: bool = False
+    ANSWER_WRITER_MAX_ROWS: int = 10
 
     model_config = SettingsConfigDict(
         env_file=(str(BASE_DIR / ".env"), ".env"),

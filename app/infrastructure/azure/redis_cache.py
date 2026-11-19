@@ -69,9 +69,30 @@ class InMemoryCache:
             return True
         return False
 
+    async def clear_tenant(self, company_id: str) -> int:
+        prefix = f"v1:{company_id}:"
+        to_del = [k for k in list(self._data.keys()) if k.startswith(prefix)]
+        for k in to_del:
+            self._data.pop(k, None)
+        return len(to_del)
+
 
 _redis_client: Any = None
 _in_memory_client = InMemoryCache()
+
+
+async def clear_tenant_cache(company_id: str, client: Any = None) -> int:
+    """Clear all query and plan cache keys for a given tenant."""
+    c = client or get_cache_client()
+    if hasattr(c, "clear_tenant"):
+        return await c.clear_tenant(company_id)
+    try:
+        keys = await c.keys(f"v1:{company_id}:*")
+        if keys:
+            return await c.delete(*keys)
+    except Exception:
+        pass
+    return 0
 
 
 async def init_redis() -> None:

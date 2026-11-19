@@ -17,12 +17,17 @@ class DatasetDefinition:
     required_columns: List[str]
     optional_columns: List[str] = field(default_factory=list)
     field_types: Dict[str, str] = field(default_factory=dict)
+    field_descriptions: Dict[str, str] = field(default_factory=dict)
+    queryable_fields: Dict[str, bool] = field(default_factory=dict)
 
     @property
     def all_columns(self) -> List[str]:
         return list(self.required_columns) + [
             c for c in self.optional_columns if c not in self.required_columns
         ]
+
+    def is_queryable(self, field_name: str) -> bool:
+        return self.queryable_fields.get(field_name, True)
 
 
 DATASET_CATALOG: Dict[str, DatasetDefinition] = {
@@ -52,6 +57,28 @@ DATASET_CATALOG: Dict[str, DatasetDefinition] = {
             "postal_code": "string",
             "status": "string",
         },
+        field_descriptions={
+            "customer_id": "Unique customer account ID",
+            "name": "Customer company or contact name",
+            "email": "Customer contact email address (personal data)",
+            "phone": "Customer contact phone number (personal data)",
+            "city": "City of business operations",
+            "region": "Sales territory region (e.g. North, South, West, East)",
+            "address": "Customer street address",
+            "postal_code": "Postal code",
+            "status": "Account status (e.g. active, inactive)",
+        },
+        queryable_fields={
+            "customer_id": True,
+            "name": True,
+            "email": False,  # Personal data: not queryable
+            "phone": False,  # Personal data: not queryable
+            "city": True,
+            "region": True,
+            "address": True,
+            "postal_code": True,
+            "status": True,
+        },
     ),
     "products": DatasetDefinition(
         key="products",
@@ -75,6 +102,24 @@ DATASET_CATALOG: Dict[str, DatasetDefinition] = {
             "unit_price": "float",
             "description": "string",
             "reorder_level": "integer",
+        },
+        field_descriptions={
+            "product_id": "Unique product SKU identifier",
+            "name": "Commercial product name",
+            "sku": "Stock keeping unit alphanumeric code",
+            "category": "Product classification category",
+            "unit_price": "Unit selling price in INR",
+            "description": "Product specification details",
+            "reorder_level": "Minimum inventory reorder trigger level",
+        },
+        queryable_fields={
+            "product_id": True,
+            "name": True,
+            "sku": True,
+            "category": True,
+            "unit_price": True,
+            "description": True,
+            "reorder_level": True,
         },
     ),
     "orders": DatasetDefinition(
@@ -102,6 +147,26 @@ DATASET_CATALOG: Dict[str, DatasetDefinition] = {
             "items_count": "integer",
             "currency": "string",
         },
+        field_descriptions={
+            "order_id": "Unique commercial order code",
+            "order_date": "Order placement date and timestamp",
+            "customer_name": "Purchasing customer or client name",
+            "region": "Geographic sales region (e.g. North, South, West, East)",
+            "status": "Order fulfillment status (completed, pending, cancelled)",
+            "total": "Total order amount in INR",
+            "items_count": "Total item count in order",
+            "currency": "Order currency code",
+        },
+        queryable_fields={
+            "order_id": True,
+            "order_date": True,
+            "customer_name": True,
+            "region": True,
+            "status": True,
+            "total": True,
+            "items_count": True,
+            "currency": True,
+        },
     ),
     "invoices": DatasetDefinition(
         key="invoices",
@@ -128,6 +193,26 @@ DATASET_CATALOG: Dict[str, DatasetDefinition] = {
             "paid_at": "date",
             "currency": "string",
         },
+        field_descriptions={
+            "invoice_number": "Unique invoice reference number",
+            "invoice_date": "Date of invoice issuance",
+            "due_date": "Payment due date",
+            "customer_name": "Invoiced client account name",
+            "amount": "Total billing payable amount in INR",
+            "status": "Invoice settlement status (paid, unpaid, overdue)",
+            "paid_at": "Settlement payment timestamp",
+            "currency": "Invoice currency",
+        },
+        queryable_fields={
+            "invoice_number": True,
+            "invoice_date": True,
+            "due_date": True,
+            "customer_name": True,
+            "amount": True,
+            "status": True,
+            "paid_at": True,
+            "currency": True,
+        },
     ),
     "stock_levels": DatasetDefinition(
         key="stock_levels",
@@ -149,6 +234,22 @@ DATASET_CATALOG: Dict[str, DatasetDefinition] = {
             "reorder_point": "integer",
             "unit": "string",
             "last_counted_at": "date",
+        },
+        field_descriptions={
+            "product_name": "Stocked item product name",
+            "warehouse_location": "Warehouse facility location or hub name",
+            "quantity_on_hand": "Units available in stock",
+            "reorder_point": "Minimum inventory threshold level",
+            "unit": "Unit of measurement",
+            "last_counted_at": "Timestamp of physical stock count",
+        },
+        queryable_fields={
+            "product_name": True,
+            "warehouse_location": True,
+            "quantity_on_hand": True,
+            "reorder_point": True,
+            "unit": True,
+            "last_counted_at": True,
         },
     ),
 }
