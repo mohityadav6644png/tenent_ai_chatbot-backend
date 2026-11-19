@@ -1,0 +1,55 @@
+version: "3.8"
+
+services:
+  mongo:
+    image: mongo:7.0
+    container_name: chatbot-mongo
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+      - ../scripts/create_db_users.js:/docker-entrypoint-initdb.d/create_db_users.js:ro
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: chatbot-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    container_name: chatbot-api
+    ports:
+      - "8000:8000"
+    environment:
+      APP_ENV: production
+      MONGODB_URL: mongodb://app_user:app_secure_password_123@mongo:27017/app_data?authSource=app_data
+      MONGODB_DB: app_data
+      MONGODB_BUSINESS_DB: business_data
+      MONGODB_BUSINESS_URL_READER: mongodb://business_reader:reader_secure_password_123@mongo:27017/business_data?authSource=business_data
+      MONGODB_BUSINESS_URL_WRITER: mongodb://business_writer:writer_secure_password_123@mongo:27017/business_data?authSource=business_data
+      REDIS_URL: redis://redis:6379/0
+      LLM_PROVIDER: fake
+    depends_on:
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+volumes:
+  mongo_data:
+  redis_data:

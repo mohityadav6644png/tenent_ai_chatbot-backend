@@ -1,0 +1,5 @@
+# Code owners for company-chatbot-backend
+* @backend-team
+/app/core/ @security-team
+/app/infrastructure/ @devops-team
+
