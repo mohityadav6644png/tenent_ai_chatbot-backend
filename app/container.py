@@ -9,7 +9,9 @@ from app.core.logging import logger
 from app.infrastructure.azure.openai_client import AzureSQLGenerator, FakeSQLGenerator, SQLGenerator
 from app.infrastructure.azure.redis_cache import get_cache_client
 from app.infrastructure.company.csv_parser import StandardCsvParser
+from app.infrastructure.company_files.csv_parser import CompanyFilesCsvParser
 from app.infrastructure.db.chat_repo import MongoChatRepository
+from app.infrastructure.db.company_files_repo import MongoCompanyFilesRepository
 from app.infrastructure.db.company_repo import (
     MongoCompanyRecordsRepository,
     MongoDataImportRepository,
@@ -28,6 +30,7 @@ from app.modules.audit.service import AuditService
 from app.modules.auth.service import AuthService
 from app.modules.chat.service import QueryService
 from app.modules.company.service import CompanyService
+from app.modules.company_files.service import CompanyFilesService
 from app.modules.reports.service import ReportService
 from app.modules.tenants.service import TenantService
 from app.modules.users.service import UserService
@@ -140,6 +143,15 @@ class Container:
             cache=self.cache,
             audit_service=self.audit_service,
         )
+        self.company_files_repo = MongoCompanyFilesRepository()
+        self.company_files_parser = CompanyFilesCsvParser()
+        self.company_files_service = CompanyFilesService(
+            repo=self.company_files_repo,
+            parser=self.company_files_parser,
+            tenant_repo=self.tenant_repo,
+            cache=self.cache,
+            audit=self.audit_service,
+        )
 
 
 container = Container()
@@ -175,3 +187,7 @@ def get_report_service() -> ReportService:
 
 def get_company_service() -> CompanyService:
     return container.company_service
+
+
+def get_company_files_service() -> CompanyFilesService:
+    return container.company_files_service

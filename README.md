@@ -192,3 +192,32 @@ The platform supports free-tier AI providers with in-process concurrency limitin
 * **Production Data:** Any real customer, proprietary, or regulated data should be routed through a paid tier (e.g., Azure OpenAI, paid Gemini API, or dedicated models) where contractual terms prohibit training on customer data.
 #   t e n e n t _ a i _ c h a t b o t - b a c k e n d  
  
+
+## Company files
+
+Multi-tenant CSV file management and chatbot data source.
+
+### Endpoints
+- GET /v1/company/files: List company files with summary
+- POST /v1/company/files/preview: Preview CSV upload (types, suggested hidden, validation errors)
+- POST /v1/company/files: Create company file with multipart file and meta JSON
+- GET /v1/company/files/{id}: Get file detail with column definitions
+- PATCH /v1/company/files/{id}: Update file metadata, column meanings, or hidden flags
+- POST /v1/company/files/{id}/upload: Re-upload CSV data (replace or append mode)
+- DELETE /v1/company/files/{id}: Delete file metadata and all associated data rows
+
+### Settings
+- FILES_MAX_PER_COMPANY (default: 10): Maximum files allowed per tenant
+- IMPORT_MAX_FILE_MB (default: 5): Maximum file size in MB
+- IMPORT_MAX_ROWS (default: 50000): Maximum rows per CSV file
+- IMPORT_MAX_COLUMNS (default: 30): Maximum columns per CSV file
+- IMPORT_MAX_CELL_CHARS (default: 2000): Maximum character length per cell
+- IMPORT_MAX_PER_HOUR (default: 10): Maximum file import/upload operations per hour
+- FILES_CATALOG_MAX_KB (default: 15): Maximum size of schema catalog injected into generator prompt
+- IMPORT_PREVIEW_ERRORS (default: 500): Maximum preview errors captured
+
+### Rules
+- Access is restricted strictly to company_admin with valid session cookie and CSRF token (X-CSRF-Token).
+- company_id is always derived exclusively from authenticated TenantContext; never accepted from client input.
+- Data rows are stored in company_rows within the business database, isolated by company_id and ile_id.
+- Hidden columns are completely excluded from AI schema catalog and stats, rejected by query validator, and stripped via $unset in scope_file_pipeline.

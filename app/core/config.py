@@ -40,7 +40,7 @@ class Settings(BaseSettings):
     MONGODB_BUSINESS_URL_WRITER: str = "mongodb://localhost:27017"
     POSTGRES_URL: str = ""
     POSTGRES_READER_URL: str = ""
-    REDIS_URL: str = ""
+    REDIS_URL: str = "redis://localhost:6379/0"
 
     # Legacy JWT Settings (retained for backward compatibility)
     JWT_SECRET_KEY: str = (
@@ -113,6 +113,8 @@ class Settings(BaseSettings):
     IMPORT_MAX_PER_HOUR: int = 10
     DATASET_STALE_DAYS: int = 30
     IMPORT_PREVIEW_ERRORS: int = 500
+    FILES_MAX_PER_COMPANY: int = 10
+    FILES_CATALOG_MAX_KB: int = 15
 
     # Structured Query Plan & Text Search
     QUERY_PLAN_ENABLED: bool = True

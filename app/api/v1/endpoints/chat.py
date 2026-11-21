@@ -9,7 +9,6 @@ from app.api.v1.schemas.chat import (
     ChatQueryRequest,
     ChatQueryResponse,
     ConversationsListResponse,
-    FeedbackRequest,
 )
 from app.container import get_query_service
 from app.core.context import TenantContext
@@ -47,17 +46,3 @@ async def list_conversations(
 ):
     items = await service.list_conversations(user_id=ctx.user_id, company_id=ctx.company_id)
     return {"conversations": items}
-
-
-@router.post("/feedback", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(verify_csrf)])
-async def submit_feedback(
-    data: FeedbackRequest,
-    ctx: TenantContext = Depends(require_roles("employee", "company_admin")),
-    service: QueryService = Depends(get_query_service),
-):
-    await service.submit_feedback(
-        user_id=ctx.user_id,
-        message_id=data.message_id,
-        helpful=data.helpful,
-    )
-    return Response(status_code=status.HTTP_204_NO_CONTENT)

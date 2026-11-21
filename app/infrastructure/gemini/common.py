@@ -42,11 +42,37 @@ def load_prompts() -> tuple[str, List[Dict[str, Any]]]:
 def build_system_instruction(catalog: Dict[str, Any]) -> str:
     """Compose full system prompt including catalog schema and rules."""
     system_text, _ = load_prompts()
-    catalog_json = json.dumps(catalog or {}, indent=2)
+    if "summaries" in catalog and catalog["summaries"]:
+        from app.modules.company.summary import format_catalog_summary_for_prompt
+        catalog_section = format_catalog_summary_for_prompt(catalog["summaries"])
+    else:
+        catalog_json = json.dumps(catalog or {}, indent=2)
+        catalog_section = f"```json\n{catalog_json}\n```"
+
+    files_section = ""
+    if catalog.get("files"):
+        files_json = json.dumps(catalog["files"], indent=2, default=str)
+        files_section = (
+            f"\n\n## Tenant Company Files (Active Admin-Defined CSV Files):\n"
+            f"```json\n{files_json}\n```\n\n"
+            f"RULES FOR COMPANY FILES:\n"
+            f"1. The AI answers each question from exactly ONE file. Choose the best-matching file by name and description.\n"
+            f"2. Use the file's 'slug' as the 'collection' in the MongoDB query spec.\n"
+            f"3. Only query the non-hidden column keys listed for that file.\n"
+            f"4. If no file fits the question, return decision 'refuse' with a short message.\n"
+            f"5. If several files fit, return decision 'clarification_needed' with the file names as options.\n"
+            f"6. Absolutely NO joins and NO cross-file queries.\n"
+        )
+
     return (
         f"{system_text}\n\n"
-        f"## Tenant Schema Catalog (Active Collections and Fields):\n"
-        f"```json\n{catalog_json}\n```\n\n"
+        f"## Tenant Schema Understanding (Active Collections and Fields):\n"
+        f"{catalog_section}"
+        f"{files_section}\n\n"
+        f"RULES FOR UNUPLOADED DATASETS:\n"
+        f"If the user asks a question about a collection marked 'no data uploaded (0 rows)', refuse with decision 'refuse' and provide:\n"
+        f"headline_template: 'No data uploaded'\n"
+        f"detail_template: 'No data has been uploaded for this dataset yet. Ask your admin to upload a CSV in Company data.'\n\n"
         f"IMPORTANT: Respond ONLY with a valid JSON object matching Output JSON Schema. "
         f"No markdown fences, no explanatory text outside JSON. Max size is 8KB."
     )

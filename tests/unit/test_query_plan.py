@@ -256,3 +256,90 @@ async def test_text_search_fallback():
     assert res["meta"]["source"] == "records"
     assert res["answer"]["columns"][0]["name"] == "title"
     assert res["answer"]["rows"][0][0] == "Return Policy"
+
+
+def test_try_parse_number_with_currencies():
+    from app.infrastructure.company_files.csv_parser import try_parse_number
+    assert try_parse_number("₹1,500") == 1500
+    assert try_parse_number("₹0") == 0
+    assert try_parse_number("₹600") == 600
+    assert try_parse_number("$1,250.50") == 1250.5
+    assert try_parse_number("Rs. 450") == 450
+    assert try_parse_number("450 INR") == 450
+    assert try_parse_number("invalid") is None
+
+
+def test_plan_translator_field_to_field_and_expr():
+    catalog = {
+        "allowed_collections": ["medicine_stock"],
+        "files": [{
+            "slug": "medicine_stock",
+            "name": "Medicine Stock",
+            "columns": [
+                {"key": "medicine", "type": "text"},
+                {"key": "stock_units", "type": "number"},
+                {"key": "reorder_level", "type": "number"},
+                {"key": "price_per_unit", "type": "number"},
+            ],
+        }],
+    }
+    plan = QueryPlan(
+        decision="answer",
+        collection="medicine_stock",
+        filters=[QueryPlanFilter(field="stock_units", op="lt", value='"$reorder_level"')],
+        select=["medicine", "stock_units", "reorder_level"],
+    )
+    query_spec, cols = translate_plan_to_query(plan, catalog)
+    match_stage = query_spec["pipeline"][0]["$match"]
+    assert "$expr" in match_stage
+    assert match_stage["$expr"] == {"$lt": ["$stock_units", "$reorder_level"]}
+
+
+def test_plan_translator_computed_product_metric():
+    catalog = {
+        "allowed_collections": ["medicine_stock"],
+        "files": [{
+            "slug": "medicine_stock",
+            "name": "Medicine Stock",
+            "columns": [
+                {"key": "medicine", "type": "text"},
+                {"key": "stock_units", "type": "number"},
+                {"key": "price_per_unit", "type": "number"},
+            ],
+        }],
+    }
+    plan = QueryPlan(
+        decision="answer",
+        collection="medicine_stock",
+        metrics=[QueryPlanMetric(fn="sum", field="stock_units * price_per_unit", as_name="total_stock_value")],
+    )
+    query_spec, cols = translate_plan_to_query(plan, catalog)
+    group_stage = query_spec["pipeline"][0]["$group"]
+    assert group_stage["total_stock_value"] == {"$sum": {"$multiply": ["$stock_units", "$price_per_unit"]}}
+
+
+def test_plan_translator_year_date_filter():
+    catalog = {
+        "allowed_collections": ["medicine_stock"],
+        "files": [{
+            "slug": "medicine_stock",
+            "name": "Medicine Stock",
+            "columns": [
+                {"key": "medicine", "type": "text"},
+                {"key": "expiry_date", "type": "date"},
+            ],
+        }],
+    }
+    # Test op: contains with year
+    plan = QueryPlan(
+        decision="answer",
+        collection="medicine_stock",
+        filters=[QueryPlanFilter(field="expiry_date", op="contains", value='"2026"')],
+        select=["medicine"],
+    )
+    query_spec, cols = translate_plan_to_query(plan, catalog)
+    match_stage = query_spec["pipeline"][0]["$match"]
+    assert "$gte" in match_stage["expiry_date"]
+    assert "$lte" in match_stage["expiry_date"]
+    assert match_stage["expiry_date"]["$gte"] == {"$date": "2026-01-01T00:00:00+00:00"}
+    assert match_stage["expiry_date"]["$lte"] == {"$date": "2026-12-31T23:59:59+00:00"}

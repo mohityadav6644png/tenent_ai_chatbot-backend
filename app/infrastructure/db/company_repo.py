@@ -53,8 +53,8 @@ class MongoDataIngestionRepository:
     """Repository for structured business datasets using business_database_writer."""
 
     def __init__(self, writer_db: Any = None, reader_db: Any = None):
-        self._writer_db = writer_db or business_database_writer
-        self._reader_db = reader_db or business_database_reader
+        self._writer_db = writer_db if writer_db is not None else business_database_writer
+        self._reader_db = reader_db if reader_db is not None else business_database_reader
 
     async def get_dataset_stats(
         self, company_id: str, collection_name: str
@@ -185,7 +185,7 @@ class MongoDataImportRepository:
     """Repository for import audit history and concurrency tracking in app_database."""
 
     def __init__(self, db: Any = None):
-        self._db = db or app_database
+        self._db = db if db is not None else app_database
         self._collection = self._db["data_imports"]
 
     async def has_active_import(

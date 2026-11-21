@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import uuid
 
 from app.core.config import settings
+from app.core.logging import logger
 from app.modules.company.datasets import DATASET_CATALOG, DatasetDefinition, get_dataset_definition
 from app.modules.company.interfaces import (
     CacheClientProtocol,
@@ -205,19 +206,26 @@ class CompanyService:
             created_by=user_id,
         )
 
+        from app.core.cache import invalidate_company_cache
+
         # Use db override if provided (e.g. mock_db in integration tests)
         if db is not None:
             collection = db["company_records"]
             result = await collection.insert_one(doc)
+            await invalidate_company_cache(company_id)
             return str(result.inserted_id)
 
         if self.records_repo is not None:
-            return await self.records_repo.insert_record(doc)
+            rec_id = await self.records_repo.insert_record(doc)
+            await invalidate_company_cache(company_id)
+            return rec_id
 
         from app.infrastructure.db.company_repo import MongoCompanyRecordsRepository
 
         repo = MongoCompanyRecordsRepository()
-        return await repo.insert_record(doc)
+        rec_id = await repo.insert_record(doc)
+        await invalidate_company_cache(company_id)
+        return rec_id
 
     async def import_csv_data(
         self,
@@ -479,6 +487,12 @@ class CompanyService:
                 )
             except Exception:
                 pass
+
+        try:
+            from app.core.cache import invalidate_company_cache
+            await invalidate_company_cache(company_id)
+        except Exception:
+            pass
 
         return inserted_count, skipped_count, import_id
 
@@ -844,10 +858,31 @@ class CompanyService:
                 )
                 updated = 0
 
-            # 7. Post-import maintenance: bump schema_version and clear cache
+            # 7. Post-import maintenance: rebuild summary, bump schema_version, clear query cache
+            try:
+                from app.modules.company.summary import build_dataset_summary
+                r_db = getattr(self.ingestion_repo, "_reader_db", None)
+                a_db = getattr(self.tracking_repo, "_db", None)
+                await build_dataset_summary(company_id, dataset_key, reader_db=r_db, app_db=a_db)
+            except Exception as sum_err:
+                logger.warning(f"Failed to build summary for dataset {dataset_key}: {sum_err}")
+
             if self.tenant_repo is not None:
                 try:
                     await self.tenant_repo.bump_schema_version(company_id)
+                except Exception:
+                    pass
+
+            try:
+                from app.core.cache import invalidate_company_cache
+                await invalidate_company_cache(company_id)
+            except Exception:
+                pass
+
+            if self.cache is not None:
+                try:
+                    from app.infrastructure.azure.redis_cache import clear_tenant_cache
+                    await clear_tenant_cache(company_id, self.cache)
                 except Exception:
                     pass
 
@@ -870,6 +905,13 @@ class CompanyService:
                         action="import_dataset",
                         target=company_id,
                         result="success",
+                        metadata={
+                            "dataset": dataset_key,
+                            "mode": clean_mode,
+                            "inserted": inserted,
+                            "updated": updated,
+                            "skipped": skipped_count,
+                        },
                     )
                 except Exception:
                     pass

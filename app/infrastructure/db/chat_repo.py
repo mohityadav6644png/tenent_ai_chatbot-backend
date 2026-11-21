@@ -12,7 +12,6 @@ from app.infrastructure.azure.redis_cache import get_cache_client
 from app.infrastructure.db.catalog_repo import SchemaCatalogRepo
 from app.infrastructure.db.mongodb import (
     conversations_collection,
-    feedback_collection,
     messages_collection,
     tenants_collection,
     usage_counters_collection,
@@ -80,18 +79,6 @@ class MongoChatRepository:
             {"user_id": str(user_id), "company_id": str(company_id)}
         ).sort("created_at", -1).to_list(100)
         return [{"id": str(d["_id"]), "title": d.get("title", "Conversation")} for d in docs]
-
-    async def save_feedback(self, message_id: str, user_id: str, helpful: bool) -> None:
-        msg_oid = ObjectId(message_id) if ObjectId.is_valid(message_id) else message_id
-        msg = await messages_collection.find_one({"_id": msg_oid, "user_id": str(user_id)})
-        if not msg:
-            raise NotFoundError("Message not found or does not belong to you.")
-        await feedback_collection.insert_one({
-            "message_id": str(message_id),
-            "user_id": str(user_id),
-            "helpful": helpful,
-            "created_at": datetime.now(timezone.utc),
-        })
 
     async def get_schema_catalog(self, company_id: str) -> Dict[str, Any]:
         return await self._catalog_repo.get_catalog(company_id)

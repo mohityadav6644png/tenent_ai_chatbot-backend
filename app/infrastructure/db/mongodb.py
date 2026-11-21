@@ -10,7 +10,7 @@ from app.core.config import settings
 from app.core.exceptions import AppError, SqlValidationFailedError, UnauthenticatedError
 from app.core.logging import logger
 
-ALLOWED_BUSINESS_COLLECTIONS = frozenset({"customers", "products", "orders", "invoices", "stock_levels"})
+ALLOWED_BUSINESS_COLLECTIONS = frozenset({"customers", "products", "orders", "invoices", "stock_levels", "company_rows"})
 
 # 1. App Database Client (readWrite on app_data)
 client = AsyncMongoClient(settings.MONGODB_URL, serverSelectionTimeoutMS=2000, connectTimeoutMS=2000)
@@ -35,13 +35,13 @@ password_resets_collection = database["password_resets"]
 reports_collection = database["reports"]
 conversations_collection = database["conversations"]
 messages_collection = database["messages"]
-feedback_collection = database["feedback"]
 audit_events_collection = database["audit_events"]
 query_log_collection = database["query_log"]
 usage_counters_collection = database["usage_counters"]
 revoked_tokens_collection = database["revoked_tokens"]
 company_records_collection = database["company_records"]
 dataset_catalog_collection = database["dataset_catalog"]
+company_files_collection = database["company_files"]
 
 
 def get_business_collection(ctx: Any, name: str):
@@ -67,6 +67,8 @@ async def connect_to_mongodb():
         await password_resets_collection.create_index("expires_at", expireAfterSeconds=0)
         await query_log_collection.create_index("created_at", expireAfterSeconds=2592000)
         await company_records_collection.create_index([("company_id", ASCENDING), ("created_at", ASCENDING)])
+        await company_files_collection.create_index([("company_id", ASCENDING), ("slug", ASCENDING)], unique=True)
+        await company_files_collection.create_index([("company_id", ASCENDING), ("updated_at", ASCENDING)])
         logger.info("MongoDB app client connected and indexes verified")
     except Exception as exc:
         logger.warning(f"Could not connect to MongoDB or set indexes: {exc}")

@@ -12,10 +12,11 @@ from starlette.responses import JSONResponse
 
 from app.api.error_handlers import register_error_handlers
 from app.api.v1.endpoints.company import router as company_router
+from app.api.v1.endpoints.chatbot import router as chatbot_router
 from app.api.v1.router import v1_router
 from app.core.config import settings
 from app.core.logging import request_id_ctx
-from app.infrastructure.azure.redis_cache import close_redis, init_redis
+from app.core.cache import close_redis, init_redis
 from app.infrastructure.db.mongodb import (
     client as mongo_client,
     close_mongodb_connection,
@@ -29,7 +30,7 @@ MAX_BODY_SIZE_BYTES = 1048576  # 1 MB
 async def lifespan(app: FastAPI):
     if settings.ENVIRONMENT != "testing":
         await connect_to_mongodb()
-        await init_redis()
+        await init_redis(settings.REDIS_URL)
     yield
     if settings.ENVIRONMENT != "testing":
         await close_mongodb_connection()
@@ -85,6 +86,7 @@ def create_app() -> FastAPI:
     register_error_handlers(app)
     app.include_router(v1_router)
     app.include_router(company_router, prefix="/api/v1/company")
+    app.include_router(chatbot_router, prefix="/api/v1/chatbot")
 
     @app.get("/")
     async def root():

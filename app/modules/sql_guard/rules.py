@@ -25,7 +25,7 @@ ALLOWED_OPERATORS = frozenset({
     "$add", "$subtract", "$multiply", "$divide", "$mod", "$abs", "$round", "$ceil", "$floor",
     "$cond", "$ifNull", "$switch", "$dateTrunc", "$dateToString", "$year", "$month", "$dayOfMonth",
     "$dayOfWeek", "$toLower", "$toUpper", "$concat", "$substr", "$size", "$arrayElemAt", "$toInt", "$toDouble",
-    "$regex", "$regexMatch", "$date",
+    "$regex", "$regexMatch", "$date", "$expr",
 }) | ALLOWED_STAGES
 
 # Business collections catalog fields (only queryable fields allowed)

@@ -4,7 +4,10 @@ Exposes tenant-specific collections, fields, types, sample values, relationships
 company_id is strictly omitted from the AI-visible catalog.
 """
 
+from datetime import datetime
+import json
 from typing import Any, Dict
+from app.core.config import settings
 from app.infrastructure.db.mongodb import tenants_collection
 
 MONGO_BUSINESS_CATALOG = {
@@ -72,13 +75,18 @@ MONGO_BUSINESS_CATALOG = {
 
 
 class SchemaCatalogRepo:
+    def __init__(self, app_db: Any = None, reader_db: Any = None):
+        self._app_db = app_db
+        self._reader_db = reader_db
+
     async def get_catalog(self, company_id: str) -> Dict[str, Any]:
         """Fetch AI-visible catalog without company_id."""
         schema_version = 1
         try:
             from bson import ObjectId
             oid = ObjectId(company_id) if ObjectId.is_valid(company_id) else company_id
-            tenant = await tenants_collection.find_one({"_id": oid})
+            t_coll = (self._app_db["tenants"] if self._app_db is not None else tenants_collection)
+            tenant = await t_coll.find_one({"_id": oid})
             if tenant:
                 schema_version = tenant.get("schema_version", 1)
         except Exception:
@@ -88,13 +96,83 @@ class SchemaCatalogRepo:
         total_row_count = 0
         try:
             from app.modules.company.summary import get_tenant_summaries
-            summaries = await get_tenant_summaries(company_id)
+            summaries = await get_tenant_summaries(company_id, app_db=self._app_db, reader_db=self._reader_db)
             total_row_count = sum(s.get("row_count", 0) for s in summaries)
         except Exception:
             pass
+
+        ready_files = []
+        try:
+            from app.infrastructure.db.mongodb import company_files_collection
+            files_coll = self._app_db["company_files"] if self._app_db is not None else company_files_collection
+            cursor = files_coll.find({"company_id": str(company_id), "status": "ready"}).sort("updated_at", -1)
+            raw_files = await cursor.to_list(length=100)
+            for f in raw_files:
+                f_stats = f.get("stats", {}).get("columns", {})
+                cols = []
+                for c in f.get("columns", []):
+                    if c.get("hidden"):
+                        continue
+                    k = c["key"]
+                    col_info = {
+                        "key": k,
+                        "label": c.get("label", k),
+                        "type": c.get("type", "text"),
+                        "meaning": c.get("meaning"),
+                        "example": c.get("example"),
+                    }
+                    if k in f_stats:
+                        st = f_stats[k]
+                        if "min" in st:
+                            col_info["min"] = st.get("min")
+                            col_info["max"] = st.get("max")
+                        if "distinct_values" in st and st.get("distinct_values") is not None:
+                            col_info["distinct_values"] = st.get("distinct_values")
+                    cols.append(col_info)
+
+                ready_files.append({
+                    "slug": f.get("slug", ""),
+                    "name": f.get("name", ""),
+                    "description": f.get("description", ""),
+                    "row_count": f.get("row_count", 0),
+                    "updated_at": f.get("updated_at"),
+                    "columns": cols,
+                })
+        except Exception:
+            pass
+
+        # Cap whole catalog at settings.FILES_CATALOG_MAX_KB (15 KB)
+        max_bytes = getattr(settings, "FILES_CATALOG_MAX_KB", 15) * 1024
+        serialized = json.dumps(ready_files, default=str)
+        if len(serialized.encode("utf-8")) > max_bytes:
+            # 1. Drop distinct-value lists first
+            for rf in ready_files:
+                for c in rf.get("columns", []):
+                    c.pop("distinct_values", None)
+            serialized = json.dumps(ready_files, default=str)
+
+        if len(serialized.encode("utf-8")) > max_bytes:
+            # 2. Mark least recently updated files "details omitted"
+            sorted_indices = sorted(range(len(ready_files)), key=lambda i: ready_files[i].get("updated_at") or datetime.min)
+            for idx in sorted_indices:
+                ready_files[idx]["columns"] = [{"note": "details omitted"}]
+                serialized = json.dumps(ready_files, default=str)
+                if len(serialized.encode("utf-8")) <= max_bytes:
+                    break
 
         catalog = dict(MONGO_BUSINESS_CATALOG)
         catalog["schema_version"] = schema_version
         catalog["summaries"] = summaries
         catalog["total_row_count"] = total_row_count
+        catalog["files"] = ready_files
+
+        file_slugs = [rf["slug"] for rf in ready_files if rf.get("slug")]
+        catalog["allowed_collections"] = list(catalog.get("allowed_collections", [])) + file_slugs
+        catalog["allowed_views"] = list(catalog.get("allowed_views", [])) + file_slugs
+
+        file_fields = {}
+        for rf in ready_files:
+            file_fields[rf["slug"]] = {c["key"] for c in rf.get("columns", []) if "key" in c}
+        catalog["file_fields"] = file_fields
+
         return catalog

@@ -82,17 +82,20 @@ _in_memory_client = InMemoryCache()
 
 
 async def clear_tenant_cache(company_id: str, client: Any = None) -> int:
-    """Clear all query and plan cache keys for a given tenant."""
+    """Clear all query and plan cache keys for a given tenant across L1 and L2."""
+    from app.core.cache import invalidate_company_cache
+    total = await invalidate_company_cache(company_id)
     c = client or get_cache_client()
     if hasattr(c, "clear_tenant"):
-        return await c.clear_tenant(company_id)
-    try:
-        keys = await c.keys(f"v1:{company_id}:*")
-        if keys:
-            return await c.delete(*keys)
-    except Exception:
-        pass
-    return 0
+        total += await c.clear_tenant(company_id)
+    else:
+        try:
+            keys = await c.keys(f"v1:{company_id}:*")
+            if keys:
+                total += await c.delete(*keys)
+        except Exception:
+            pass
+    return total
 
 
 async def init_redis() -> None:

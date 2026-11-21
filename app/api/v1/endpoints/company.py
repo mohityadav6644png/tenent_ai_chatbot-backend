@@ -22,6 +22,7 @@ from fastapi.responses import JSONResponse
 import pandas as pd
 
 from app.api.deps import get_db, get_tenant_context, require_roles
+from app.core.cache import invalidate_company_cache
 from app.api.v1.schemas.company import (
     CompanyCSVAutoImportResponse,
     CompanyCSVImportResponse,
@@ -108,6 +109,8 @@ async def insert_manual_data(
     except CompanyDataError as exc:
         return _handle_company_data_error(request, exc)
 
+    await invalidate_company_cache(company_id)
+
     return {
         "message": "Record inserted successfully",
         "id": record_id,
@@ -168,6 +171,8 @@ async def import_csv_data(
         )
     except CompanyDataError as exc:
         return _handle_company_data_error(request, exc)
+
+    await invalidate_company_cache(company_id)
 
     return {
         "message": f"Successfully imported {inserted_count} records.",
@@ -342,6 +347,8 @@ async def import_csv_auto(
             result = await collection.insert_many(records)
         inserted_count = len(result.inserted_ids)
 
+    await invalidate_company_cache(company_id)
+
     # 6. Response
     return {
         "message": f"Successfully imported {inserted_count} records.",
@@ -382,6 +389,8 @@ async def list_datasets(
         datasets = await service.list_datasets(company_id=company_id)
     except CompanyDataError as exc:
         return _handle_company_data_error(request, exc)
+
+    await invalidate_company_cache(company_id)
 
     return {"datasets": datasets}
 

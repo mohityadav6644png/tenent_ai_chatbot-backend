@@ -195,3 +195,108 @@ examples:
     plan:
       decision: "refuse"
       follow_ups: []
+
+  - question: "What is the total fee collected?"
+    plan:
+      decision: "answer"
+      collection: "appointments"
+      filters:
+        - field: "status"
+          op: "eq"
+          value: '"Completed"'
+      metrics:
+        - fn: "sum"
+          field: "fee"
+          as: "total_fee"
+      limit: 1
+      headline_template: "Total Fee Collected: ₹{row1.total_fee}"
+      detail_template: "Total consultation fees collected across completed appointments."
+      follow_ups: ["Show fee collected by department", "How many appointments are there by status?"]
+
+  - question: "Show fee collected by department"
+    plan:
+      decision: "answer"
+      collection: "appointments"
+      filters:
+        - field: "status"
+          op: "eq"
+          value: '"Completed"'
+      group_by: ["department"]
+      metrics:
+        - fn: "sum"
+          field: "fee"
+          as: "fee_collected"
+      sort:
+        - field: "fee_collected"
+          dir: "desc"
+      limit: 20
+      headline_template: "Fee collected across {row_count} departments"
+      detail_template: "Total fees collected grouped by medical department for completed visits."
+      follow_ups: ["What is the total fee collected?"]
+
+  - question: "Who is the most experienced doctor?"
+    plan:
+      decision: "answer"
+      collection: "doctors"
+      select: ["doctor_name", "department", "experience_years"]
+      sort:
+        - field: "experience_years"
+          dir: "desc"
+      limit: 1
+      headline_template: "Most Experienced Doctor: {row1.doctor_name} ({row1.experience_years} years)"
+      detail_template: "{row1.doctor_name} in {row1.department} has the highest experience."
+      follow_ups: ["How many doctors are in each department?", "What is the average consultation fee by department?"]
+
+  - question: "Which medicines need reordering?"
+    plan:
+      decision: "answer"
+      collection: "medicine_stock"
+      filters:
+        - field: "stock_units"
+          op: "lt"
+          value: '"$reorder_level"'
+      select: ["medicine", "category", "stock_units", "reorder_level"]
+      sort:
+        - field: "stock_units"
+          dir: "asc"
+      limit: 50
+      headline_template: "{row_count} medicines need reordering"
+      detail_template: "Medicines where current stock units are below the reorder level."
+      follow_ups: ["What is the total stock value?", "Which medicines expire in 2026?"]
+
+  - question: "What is the total stock value?"
+    plan:
+      decision: "answer"
+      collection: "medicine_stock"
+      metrics:
+        - fn: "sum"
+          field: "stock_units * price_per_unit"
+          as: "total_stock_value"
+      limit: 1
+      headline_template: "Total Stock Value: ₹{row1.total_stock_value}"
+      detail_template: "Total value calculated as stock units multiplied by price per unit across medicines."
+      follow_ups: ["Which medicines need reordering?"]
+
+  - question: "Which medicines expire in 2026?"
+    plan:
+      decision: "answer"
+      collection: "medicine_stock"
+      filters:
+        - field: "expiry_date"
+          op: "between"
+          value: '["2026-01-01", "2026-12-31"]'
+      select: ["medicine", "category", "stock_units", "expiry_date"]
+      sort:
+        - field: "expiry_date"
+          dir: "asc"
+      limit: 50
+      headline_template: "{row_count} medicines expire in 2026"
+      detail_template: "Medicines with expiry date in 2026."
+      follow_ups: ["Which medicines need reordering?"]
+
+  - question: "Who are the top customers?"
+    plan:
+      decision: "refuse"
+      headline_template: "No customer data"
+      detail_template: "No customer data is available for your company."
+      follow_ups: []

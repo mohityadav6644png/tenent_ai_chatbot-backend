@@ -61,8 +61,3 @@ class ConversationItem(BaseModel):
 
 class ConversationsListResponse(BaseModel):
     conversations: List[ConversationItem]
-
-
-class FeedbackRequest(BaseModel):
-    message_id: str
-    helpful: bool

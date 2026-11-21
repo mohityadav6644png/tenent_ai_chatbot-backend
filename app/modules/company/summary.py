@@ -7,7 +7,8 @@ and distinct values under strict company_id scoping.
 from datetime import datetime, timezone
 import json
 from typing import Any, Dict, List, Optional
-from pymongo import DESCENDING
+
+DESCENDING = -1
 
 from app.infrastructure.db.mongodb import (
     app_database,
@@ -33,7 +34,7 @@ async def build_dataset_summary(
     if not definition:
         return {}
 
-    r_db = reader_db or business_database_reader
+    r_db = reader_db if reader_db is not None else business_database_reader
     a_coll = (app_db["dataset_catalog"] if app_db is not None else dataset_catalog_collection)
     coll = r_db[definition.collection_name]
 
@@ -170,6 +171,7 @@ async def rebuild_tenant_summaries(
 async def get_tenant_summaries(
     company_id: str,
     app_db: Any = None,
+    reader_db: Any = None,
 ) -> List[Dict[str, Any]]:
     """Retrieves cached dataset summaries from app database, building on demand if absent."""
     a_coll = (app_db["dataset_catalog"] if app_db is not None else dataset_catalog_collection)
@@ -178,7 +180,7 @@ async def get_tenant_summaries(
 
     if not docs or len(docs) < len(DATASET_CATALOG):
         # Build missing summaries
-        docs = await rebuild_tenant_summaries(company_id, app_db=app_db)
+        docs = await rebuild_tenant_summaries(company_id, reader_db=reader_db, app_db=app_db)
 
     return docs
 

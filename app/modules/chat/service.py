@@ -57,15 +57,20 @@ class QueryService:
         catalog = await self.repo.get_schema_catalog(company_id)
         schema_version = catalog.get("schema_version", 1)
         allowed = catalog.get("allowed_collections") or catalog.get("allowed_views")
+        file_fields = catalog.get("file_fields") or {}
+        allowed_set = set(allowed) if allowed else None
 
-        # Pre-check: If company has no data uploaded in any dataset, refuse immediately without calling AI
+        # Pre-check: If company has no ready files (or no data uploaded), refuse immediately without calling AI
+        ready_files = catalog.get("files")
         total_rows = catalog.get("total_row_count")
-        if total_rows is not None and total_rows == 0:
+        if (ready_files is not None and len(ready_files) == 0 and (total_rows is None or total_rows == 0)) or (
+            total_rows is not None and total_rows == 0 and not ready_files
+        ):
             latency = int((time.time() - start_time) * 1000)
             return self._build_result(
                 "refused",
                 "No data uploaded",
-                "No data has been uploaded for your company yet. Ask your admin to upload a CSV in Company data.",
+                "No data has been uploaded for your company yet. Ask your admin to add a CSV file in Company data.",
                 [],
                 [],
                 False,
@@ -88,17 +93,26 @@ class QueryService:
 
                     plan_obj = QueryPlan.model_validate(cached_data["plan"])
                     translated_spec, cols = translate_plan_to_query(plan_obj, catalog)
-                    norm_spec, cols = validate_and_format_sql(translated_spec, allowed)
+                    norm_spec, cols = validate_and_format_sql(translated_spec, allowed_set, catalog_fields=file_fields)
                 else:
                     q_val = cached_data.get("query") or cached_data.get("sql")
-                    norm_spec, cols = validate_and_format_sql(q_val, allowed)
+                    norm_spec, cols = validate_and_format_sql(q_val, allowed_set, catalog_fields=file_fields)
 
                 col_defs, rows, trunc = await self.executor.execute_query(norm_spec, company_id, columns=cols)
                 chart = determine_chart_hint(col_defs, rows)
                 headline = fill_template(cached_data.get("headline_template"), col_defs, rows)
                 detail = fill_template(cached_data.get("detail_template"), col_defs, rows)
                 latency = int((time.time() - start_time) * 1000)
-                return self._build_result("success", headline, detail, col_defs, rows, trunc, chart, cached_data.get("follow_ups", []), latency, "hit")
+
+                if not conversation_id:
+                    conv_doc = create_conversation_document(company_id, user_id, title=question)
+                    conversation_id = await self.repo.save_conversation(conv_doc)
+
+                res = self._build_result("success", headline, detail, col_defs, rows, trunc, chart, cached_data.get("follow_ups", []), latency, "hit")
+                msg_doc = create_message_document(conversation_id, company_id, user_id, question, "success", res["answer"], res["meta"])
+                await self.repo.save_message(msg_doc)
+                res["conversation_id"] = conversation_id
+                return res
             except Exception:
                 pass
 
@@ -128,13 +142,13 @@ class QueryService:
 
         raw_query = gen.get("query") or gen.get("sql")
         try:
-            norm_spec, cols = validate_and_format_sql(raw_query, allowed)
+            norm_spec, cols = validate_and_format_sql(raw_query, allowed_set, catalog_fields=file_fields)
             col_defs, rows, trunc = await self.executor.execute_query(norm_spec, company_id, columns=cols)
         except Exception:
             try:
                 repaired = await self.generator.generate(f"Fix this MongoDB query for question '{question}': {raw_query}", catalog, [], company_id)
                 repair_target = repaired.get("query") or repaired.get("sql")
-                norm_spec, cols = validate_and_format_sql(repair_target, allowed)
+                norm_spec, cols = validate_and_format_sql(repair_target, allowed_set, catalog_fields=file_fields)
                 col_defs, rows, trunc = await self.executor.execute_query(norm_spec, company_id, columns=cols)
             except Exception:
                 if settings.TEXT_SEARCH_FALLBACK_ENABLED and self.record_search_repo:
@@ -239,6 +253,3 @@ class QueryService:
 
     async def list_conversations(self, user_id: str, company_id: str) -> List[Dict[str, Any]]:
         return await self.repo.list_user_conversations(user_id, company_id)
-
-    async def submit_feedback(self, user_id: str, message_id: str, helpful: bool) -> None:
-        await self.repo.save_feedback(message_id, user_id, helpful)
