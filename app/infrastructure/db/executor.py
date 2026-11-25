@@ -25,15 +25,24 @@ def scope_pipeline(ctx: Any, pipeline: List[Dict[str, Any]], max_rows: int = 100
 
 
 def scope_file_pipeline(
-    ctx: Any, file_id: str, hidden_keys: List[str], pipeline: List[Dict[str, Any]], max_rows: int = 100
+    ctx: Any,
+    file_id: str,
+    hidden_keys: List[str],
+    pipeline: List[Dict[str, Any]],
+    max_rows: int = 100,
+    requested_join_aliases: Optional[List[str]] = None,
 ) -> List[Dict[str, Any]]:
-    """Choke point for company files: partitions by company_id and file_id, replaces root with data, and unsets hidden keys."""
+    """Choke point for company files: partitions by company_id and file_id, merges joined aliases into root, and unsets hidden keys."""
     company_id = getattr(ctx, "company_id", None) if hasattr(ctx, "company_id") else ctx
     if not company_id or not str(company_id).strip():
         raise UnauthenticatedError("Tenant context is missing company_id.")
+    merge_objects: List[Any] = ["$data"]
+    if requested_join_aliases:
+        for alias in requested_join_aliases:
+            merge_objects.append({alias: f"$joined.{alias}"})
     prefix: List[Dict[str, Any]] = [
         {"$match": {"company_id": str(company_id), "file_id": str(file_id)}},
-        {"$replaceRoot": {"newRoot": "$data"}},
+        {"$replaceRoot": {"newRoot": {"$mergeObjects": merge_objects}}},
     ]
     if hidden_keys:
         prefix.append({"$unset": list(hidden_keys)})
@@ -116,7 +125,22 @@ class MongoExecutor:
             file_id = str(file_doc["_id"])
             hidden_keys = [c["key"] for c in file_doc.get("columns", []) if c.get("hidden")]
 
-            scoped = scope_file_pipeline(company_id, file_id, hidden_keys, pipeline, self.max_rows)
+            requested_join_aliases = []
+            join_ids = query.get("joins") or []
+            if join_ids:
+                from app.infrastructure.db.mongodb import file_connections_collection
+                conn_coll = self._app_db["file_connections"] if self._app_db is not None else file_connections_collection
+                oids = [ObjectId(j) for j in join_ids if ObjectId.is_valid(j)]
+                c_docs = await conn_coll.find({
+                    "company_id": str(company_id),
+                    "$or": [{"_id": {"$in": oids}}, {"id": {"$in": [str(j) for j in join_ids]}}],
+                    "status": "active",
+                }).to_list(length=10)
+                requested_join_aliases = [c["alias"] for c in c_docs if "alias" in c]
+
+            scoped = scope_file_pipeline(
+                company_id, file_id, hidden_keys, pipeline, self.max_rows, requested_join_aliases=requested_join_aliases
+            )
             scoped = _convert_extended_json(scoped)
 
             if self._db is not None:

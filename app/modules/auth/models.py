@@ -17,9 +17,13 @@ def create_user_document(
     company_id: Optional[str] = None,
     is_active: bool = True,
     is_invited: bool = False,
+    status: Optional[str] = None,
+    must_change_password: Optional[bool] = None,
 ) -> dict:
     """User MongoDB document model"""
     now = datetime.now(timezone.utc)
+    user_status = status if status is not None else ("invited" if is_invited else ("active" if is_active else "inactive"))
+    change_pwd = must_change_password if must_change_password is not None else (True if is_invited else False)
     return {
         "_id": ObjectId(),
         "username": username.strip(),
@@ -31,9 +35,32 @@ def create_user_document(
         "company_id": company_id,
         "is_active": is_active,
         "is_invited": is_invited,
+        "status": user_status,
+        "must_change_password": change_pwd,
+        "activated_at": None,
         "last_login_at": None,
         "created_at": now,
         "updated_at": now,
+    }
+
+
+def create_invite_token_document(
+    token_hash: str,
+    company_id: str,
+    user_id: str,
+    expires_at: datetime,
+) -> dict:
+    """Invite token document for one-time onboarding activation"""
+    now = datetime.now(timezone.utc)
+    return {
+        "_id": ObjectId(),
+        "token_hash": token_hash,
+        "company_id": str(company_id),
+        "user_id": str(user_id),
+        "used": False,
+        "expires_at": expires_at,
+        "created_at": now,
+        "used_at": None,
     }
 
 

@@ -15,11 +15,17 @@ from app.main import app
 
 def export_openapi() -> None:
     openapi_schema = app.openapi()
-    output_path = Path(__file__).resolve().parent.parent / "docs" / "openapi.json"
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(output_path, "w", encoding="utf-8") as f:
-        json.dump(openapi_schema, f, indent=2)
-    print(f"OpenAPI spec successfully written to {output_path}")
+    root = Path(__file__).resolve().parent.parent.parent
+    paths = [
+        root / "docs" / "backend-openapi.json",
+        root / "frontend" / "docs" / "backend-openapi.json",
+        Path(__file__).resolve().parent.parent / "docs" / "openapi.json",
+    ]
+    for p in paths:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        with open(p, "w", encoding="utf-8") as f:
+            json.dump(openapi_schema, f, indent=2)
+        print(f"OpenAPI spec successfully written to {p}")
 
 
 if __name__ == "__main__":

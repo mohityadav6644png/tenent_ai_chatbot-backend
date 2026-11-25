@@ -13,12 +13,15 @@ from app.api.v1.endpoints.health import router as health_router
 from app.api.v1.endpoints.audit import router as audit_router
 from app.api.v1.endpoints.company import router as company_router
 from app.api.v1.endpoints.company_files import router as company_files_router
+from app.api.v1.endpoints.connections import router as connections_router
 from app.api.v1.endpoints.chatbot import router as chatbot_router
+from app.api.v1.endpoints.profile import router as profile_router
 
 v1_router = APIRouter(prefix="/v1")
 
 v1_router.include_router(auth_router, tags=["Auth"])
 v1_router.include_router(chat_router, tags=["Chat"])
+v1_router.include_router(profile_router, tags=["Profile"])
 v1_router.include_router(chatbot_router, prefix="/chatbot", tags=["Chatbot"])
 v1_router.include_router(users_router, tags=["Users"])
 v1_router.include_router(tenants_router, tags=["Tenants"])
@@ -28,3 +31,4 @@ v1_router.include_router(health_router, tags=["Health"])
 v1_router.include_router(audit_router, tags=["Audit"])
 v1_router.include_router(company_router, prefix="/company", tags=["Company data"])
 v1_router.include_router(company_files_router, prefix="/company/files", tags=["Company files"])
+v1_router.include_router(connections_router, prefix="/company/connections", tags=["Connections"])

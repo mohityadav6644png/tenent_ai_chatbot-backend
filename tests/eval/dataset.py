@@ -3,7 +3,7 @@ Evaluation Dataset (tests/eval/dataset.py)
 Benchmark test cases for NLP-to-SQL categorization: adversarial, off-topic, ambiguous, and business questions.
 """
 
-from typing import Dict, List
+from typing import Any, Dict, List
 
 # 41 benchmark evaluation cases (10 adversarial, 10 off-topic, 5 ambiguous, 16 business)
 EVAL_CASES: List[Dict[str, str]] = [
@@ -52,4 +52,83 @@ EVAL_CASES: List[Dict[str, str]] = [
     {"question": "Show inventory levels across warehouse depots", "expected": "answer"},
     {"question": "How many active customer accounts do we have?", "expected": "answer"},
     {"question": "Show total revenue from completed invoices", "expected": "answer"},
+]
+
+# Multi-turn benchmark evaluation cases on BrightPath test data
+MULTI_TURN_EVAL_CASES: List[Dict[str, Any]] = [
+    {
+        "id": "class_breakdown",
+        "description": "Class count -> Only for Class 8 (9) -> And by section? (A: 4, B: 5)",
+        "turns": [
+            "How many students are in each class?",
+            "Only for Class 8",
+            "And by section?",
+        ],
+        "expected_last": {
+            "status": "success",
+            "expected_counts": {"A": 4, "B": 5},
+            "class": "Class 8",
+        },
+    },
+    {
+        "id": "marks_lowest",
+        "description": "Avg marks -> Class 10 (Maths 63.0, Science 58.7, English 66.9) -> Lowest subject (Science 58.7)",
+        "turns": [
+            "What is the average marks in each subject?",
+            "What about only Class 10?",
+            "Which subject is the lowest?",
+        ],
+        "expected_last": {
+            "status": "success",
+            "lowest_subject": "Science",
+            "lowest_avg": 58.7,
+        },
+    },
+    {
+        "id": "fee_pending",
+        "description": "Fee status distribution -> Show only Pending (11)",
+        "turns": [
+            "How many students are in each fee status?",
+            "Show only Pending",
+        ],
+        "expected_last": {
+            "status": "success",
+            "pending_count": 11,
+        },
+    },
+    {
+        "id": "topic_switch_teachers",
+        "description": "Marks context -> topic switch to teachers file unaffected by earlier context",
+        "turns": [
+            "What is the average marks in each subject?",
+            "What about only Class 10?",
+            "How many teachers teach each subject?",
+        ],
+        "expected_last": {
+            "status": "success",
+            "is_teachers": True,
+        },
+    },
+    {
+        "id": "clarification_flow",
+        "description": "Show sales -> clarification_needed -> option answer returns success",
+        "turns": [
+            "Show sales",
+            "brightpath_students",
+        ],
+        "expected_last": {
+            "status": "success",
+        },
+    },
+    {
+        "id": "positional_reference",
+        "description": "Class count -> Show the second one -> clarification asking user to name it",
+        "turns": [
+            "How many students are in each class?",
+            "Show the second one",
+        ],
+        "expected_last": {
+            "status": "clarification_needed",
+        },
+    },
 ]

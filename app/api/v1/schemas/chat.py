@@ -5,6 +5,8 @@ Request and response models for chat queries, conversations, and feedback.
 
 from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, Field
+from app.modules.profile.models import ProfilePrompt
+from app.modules.multidoc.models import MultiDocAnswerMeta
 
 
 class ChatHistoryItem(BaseModel):
@@ -29,12 +31,16 @@ class ChatAnswerPayload(BaseModel):
     chart_hint: Literal["none", "line", "bar"] = "none"
     clarification_question: Optional[str] = None
     options: List[str] = Field(default_factory=list)
+    refusal_reason: Optional[str] = None
+    parts: Optional[List[Dict[str, Any]]] = None
 
 
 class ChatMetaPayload(BaseModel):
     latency_ms: int
     cache: Literal["hit", "miss"]
     source: Optional[str] = None
+    interpreted_question: Optional[str] = None
+    files_used: Optional[List[str]] = None
 
 
 class ChatErrorPayload(BaseModel):
@@ -52,6 +58,9 @@ class ChatQueryResponse(BaseModel):
     meta: ChatMetaPayload
     error: Optional[ChatErrorPayload] = None
     conversation_id: Optional[str] = None
+    profile_prompt: Optional[ProfilePrompt] = None
+    multidoc_meta: Optional[MultiDocAnswerMeta] = None
+    refusal_reason: Optional[str] = None
 
 
 class ConversationItem(BaseModel):

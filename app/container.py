@@ -56,6 +56,49 @@ def _build_generator_for_provider(provider_name: str) -> SQLGenerator:
         )
 
 
+def _build_followup_resolver_for_provider(provider_name: str):
+    p = (provider_name or "").strip().lower()
+    if p == "gemini":
+        from app.infrastructure.gemini.followup import GeminiFollowUpResolver
+        return GeminiFollowUpResolver()
+    elif p == "openai_compat":
+        from app.infrastructure.llm.followup import OpenAICompatFollowUpResolver
+        return OpenAICompatFollowUpResolver()
+    elif p == "azure":
+        from app.infrastructure.azure.followup import AzureFollowUpResolver
+        return AzureFollowUpResolver()
+    elif p == "fake":
+        from app.infrastructure.azure.fake_followup import FakeFollowUpResolver
+        return FakeFollowUpResolver()
+    else:
+        from app.infrastructure.azure.fake_followup import FakeFollowUpResolver
+        return FakeFollowUpResolver()
+
+
+def _build_profile_extractor_for_provider(provider_name: str):
+    p = (provider_name or "").strip().lower()
+    if p == "gemini":
+        from app.infrastructure.profile_extractor.gemini_extractor import GeminiProfileExtractor
+        return GeminiProfileExtractor()
+    else:
+        from app.infrastructure.profile_extractor.fake_extractor import FakeProfileExtractor
+        return FakeProfileExtractor()
+
+
+def _build_multidoc_planner_for_provider(provider_name: str):
+    p = (provider_name or "").strip().lower()
+    if p == "gemini":
+        try:
+            from app.infrastructure.multidoc_planner.gemini_planner import GeminiMultiDocPlanner
+            return GeminiMultiDocPlanner()
+        except Exception:
+            from app.infrastructure.multidoc_planner.fake_planner import FakeMultiDocPlanner
+            return FakeMultiDocPlanner()
+    else:
+        from app.infrastructure.multidoc_planner.fake_planner import FakeMultiDocPlanner
+        return FakeMultiDocPlanner()
+
+
 class FallbackSQLGenerator:
     """Delegates to primary generator; uses fallback only when explicitly configured on non-retryable failure."""
 
@@ -118,11 +161,38 @@ class Container:
         else:
             self.generator = primary_gen
 
+        # Multi-turn Follow-up Service
+        from app.modules.chat.followup import FollowUpService
+        resolver = _build_followup_resolver_for_provider(provider)
+        self.followup_service = FollowUpService(resolver=resolver)
+
+        # Progressive User Profiling
+        from app.infrastructure.db.profile_repository import MongoProfileRepository
+        from app.modules.profile.service import ProfileService
+        self.profile_repo = MongoProfileRepository()
+        self.profile_extractor = _build_profile_extractor_for_provider(provider)
+        self.profile_service = ProfileService(
+            repo=self.profile_repo,
+            extractor=self.profile_extractor,
+            user_repo=self.user_repo,
+            tenant_repo=self.tenant_repo,
+        )
+
         # Core Domain Services
         self.audit_service = AuditService(repo=self.audit_repo)
         self.auth_service = AuthService(repo=self.auth_repo)
         self.tenant_service = TenantService(repo=self.tenant_repo, audit=self.audit_service)
         self.user_service = UserService(repo=self.user_repo)
+        from app.infrastructure.db.multidoc_repository import MongoMultiDocRepository
+        from app.modules.multidoc.service import MultiDocService
+
+        self.multidoc_repo = MongoMultiDocRepository()
+        self.multidoc_planner = _build_multidoc_planner_for_provider(settings.LLM_PROVIDER)
+        self.multidoc_service = MultiDocService(
+            repo=self.multidoc_repo,
+            planner=self.multidoc_planner,
+            cache=self.cache,
+        )
         self.query_service = QueryService(
             executor=self.executor,
             generator=self.generator,
@@ -130,6 +200,9 @@ class Container:
             cache=self.cache,
             record_search_repo=self.record_search_repo,
             answer_writer=self.answer_writer,
+            followup_service=self.followup_service,
+            profile_service=self.profile_service,
+            multidoc_service=self.multidoc_service,
         )
         self.report_service = ReportService(
             repo=self.reports_repo, query_service=self.query_service
@@ -145,12 +218,33 @@ class Container:
         )
         self.company_files_repo = MongoCompanyFilesRepository()
         self.company_files_parser = CompanyFilesCsvParser()
+
+        from app.infrastructure.db.file_connections_repo import MongoFileConnectionsRepository
+        from app.infrastructure.file_connections.enrichment_worker import EnrichmentWorker
+        from app.modules.file_connections.service import FileConnectionsService
+
+        self.file_connections_repo = MongoFileConnectionsRepository()
+        self.enrichment_worker = EnrichmentWorker(
+            conn_repo=self.file_connections_repo,
+            files_repo=self.company_files_repo,
+            tenant_repo=self.tenant_repo,
+            cache=self.cache,
+            audit=self.audit_service,
+        )
+        self.file_connections_service = FileConnectionsService(
+            conn_repo=self.file_connections_repo,
+            files_repo=self.company_files_repo,
+            enrichment_worker=self.enrichment_worker,
+        )
+
         self.company_files_service = CompanyFilesService(
             repo=self.company_files_repo,
             parser=self.company_files_parser,
             tenant_repo=self.tenant_repo,
             cache=self.cache,
             audit=self.audit_service,
+            file_connections_service=self.file_connections_service,
+            enrichment_worker=self.enrichment_worker,
         )
 
 
@@ -191,3 +285,29 @@ def get_company_service() -> CompanyService:
 
 def get_company_files_service() -> CompanyFilesService:
     return container.company_files_service
+
+
+def get_profile_service():
+    return container.profile_service
+
+
+def get_profile_repo():
+    return container.profile_repo
+
+
+def get_multidoc_service():
+    return container.multidoc_service
+
+
+def get_file_connections_service():
+    return container.file_connections_service
+
+
+def get_file_connections_repo():
+    return container.file_connections_repo
+
+
+def get_enrichment_worker():
+    return container.enrichment_worker
+
+

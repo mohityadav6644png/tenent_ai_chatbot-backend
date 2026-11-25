@@ -90,8 +90,34 @@ async def create_business_indexes():
     # Company files and generic company rows indexes
     await db["company_rows"].create_index([("company_id", ASCENDING), ("file_id", ASCENDING)])
     await db["company_rows"].create_index([("company_id", ASCENDING), ("file_id", ASCENDING), ("import_id", ASCENDING)])
+    await db["company_rows"].create_index([("company_id", ASCENDING), ("created_at", DESCENDING)])
     await app_db["company_files"].create_index([("company_id", ASCENDING), ("slug", ASCENDING)], unique=True)
+    await app_db["company_files"].create_index([("company_id", ASCENDING), ("_id", ASCENDING)])
+    await app_db["company_files"].create_index([("company_id", ASCENDING), ("created_at", DESCENDING)])
     await app_db["company_files"].create_index([("company_id", ASCENDING), ("updated_at", DESCENDING)])
+
+    # User profiles and profile session state indexes
+    await app_db["user_profiles"].create_index([("company_id", ASCENDING), ("user_id", ASCENDING)], unique=True)
+    await app_db["profile_session_state"].create_index([("company_id", ASCENDING), ("user_id", ASCENDING), ("conversation_id", ASCENDING)], unique=True)
+    await app_db["profile_session_state"].create_index("updated_at", expireAfterSeconds=2592000)
+
+    # Onboarding invite tokens indexes
+    await app_db["invite_tokens"].create_index("token_hash", unique=True)
+    await app_db["invite_tokens"].create_index("expires_at", expireAfterSeconds=0)
+
+    # File connections indexes
+    await app_db["file_connections"].create_index(
+        [
+            ("company_id", ASCENDING),
+            ("left_file_id", ASCENDING),
+            ("left_key", ASCENDING),
+            ("right_file_id", ASCENDING),
+            ("right_key", ASCENDING),
+        ],
+        unique=True,
+    )
+    await app_db["file_connections"].create_index([("company_id", ASCENDING), ("updated_at", DESCENDING)])
+    await app_db["file_connections"].create_index([("company_id", ASCENDING), ("status", ASCENDING)])
 
     print("Compound business and data import indexes created successfully.")
     await business_writer_client.close()

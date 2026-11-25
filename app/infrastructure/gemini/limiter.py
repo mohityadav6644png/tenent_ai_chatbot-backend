@@ -18,7 +18,7 @@ class InProcessLimiter:
         self,
         max_requests_per_minute: int | None = None,
         max_concurrency: int | None = None,
-        wait_timeout: float = 5.0,
+        wait_timeout: float = 20.0,
     ):
         self.max_rpm = max_requests_per_minute or settings.LLM_MAX_REQUESTS_PER_MINUTE
         self.max_concurrency = max_concurrency or settings.LLM_MAX_CONCURRENCY

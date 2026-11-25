@@ -85,6 +85,7 @@ def create_app() -> FastAPI:
 
     register_error_handlers(app)
     app.include_router(v1_router)
+    app.include_router(v1_router, prefix="/api")
     app.include_router(company_router, prefix="/api/v1/company")
     app.include_router(chatbot_router, prefix="/api/v1/chatbot")
 

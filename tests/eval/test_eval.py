@@ -5,9 +5,9 @@ Accepts: pytest --provider gemini|openai_compat|fake
 """
 
 import pytest
-from app.container import _build_generator_for_provider
+from app.container import _build_generator_for_provider, _build_followup_resolver_for_provider
 from app.infrastructure.azure.openai_client import FakeSQLGenerator
-from tests.eval.dataset import EVAL_CASES
+from tests.eval.dataset import EVAL_CASES, MULTI_TURN_EVAL_CASES
 
 
 def test_eval_sample():
@@ -101,3 +101,143 @@ async def test_live_smoke_five_questions(eval_provider):
         pipeline_len = len(query_spec.get("pipeline", [])) if isinstance(query_spec, dict) else 0
         print(f"  [{q_type}] Q: '{q[:35]}...' -> decision: {decision}, pipeline stages: {pipeline_len}")
         assert decision in ("answer", "refuse", "clarify")
+
+
+@pytest.mark.asyncio
+async def test_eval_multiturn_accuracy_runner(eval_provider):
+    """
+    Evaluates multi-turn follow-up accuracy across conversations on BrightPath test data:
+    - Follow-up filter/grouping additions (Class 8 count, then by section)
+    - Average marks, filter Class 10, then lowest subject
+    - Fee status distribution, then show only Pending
+    - Topic switch to teachers unaffected by earlier context
+    - Clarification answered with option
+    - Positional reference asks to name it
+    """
+    resolver = _build_followup_resolver_for_provider(eval_provider)
+    generator = _build_generator_for_provider(eval_provider)
+
+    brightpath_catalog = {
+        "files": [
+            {
+                "slug": "brightpath_students",
+                "name": "Students",
+                "columns": [{"key": "student_name"}, {"key": "class"}, {"key": "section"}, {"key": "fee_status"}],
+            },
+            {
+                "slug": "brightpath_exam_marks",
+                "name": "Exam Marks",
+                "columns": [{"key": "student_name"}, {"key": "subject"}, {"key": "class"}, {"key": "marks_obtained"}],
+            },
+            {
+                "slug": "brightpath_teachers",
+                "name": "Teachers",
+                "columns": [{"key": "teacher_name"}, {"key": "subject"}, {"key": "qualification"}],
+            },
+        ],
+        "allowed_collections": ["brightpath_students", "brightpath_exam_marks", "brightpath_teachers"],
+    }
+
+    company_id = "eval-brightpath-id"
+
+    for case in MULTI_TURN_EVAL_CASES:
+        saved_turns = []
+        last_turn_res = None
+
+        for turn_idx, turn_text in enumerate(case["turns"]):
+            is_last = (turn_idx == len(case["turns"]) - 1)
+
+            res = await resolver.resolve(
+                new_message=turn_text,
+                turns=saved_turns,
+                catalog=brightpath_catalog,
+                company_id=company_id,
+            )
+
+            if res.get("needs_clarification"):
+                last_turn_res = {"status": "clarification_needed", "clarification_question": res.get("clarification_question")}
+                saved_turns.append({
+                    "role": "user",
+                    "content": turn_text,
+                })
+                saved_turns.append({
+                    "role": "assistant",
+                    "status": "clarification_needed",
+                    "resolved_question": res.get("standalone_question"),
+                    "last_was_clarification": True,
+                    "clarification_options": [],
+                })
+            else:
+                standalone_q = res.get("standalone_question", turn_text)
+                gen_res = await generator.generate(
+                    question=standalone_q,
+                    catalog=brightpath_catalog,
+                    history=[],
+                    company_id=company_id,
+                )
+                decision = gen_res.get("decision")
+                if decision == "clarify":
+                    last_turn_res = {
+                        "status": "clarification_needed",
+                        "clarification_question": gen_res.get("clarification_question"),
+                        "options": gen_res.get("options", []),
+                    }
+                    saved_turns.append({
+                        "role": "user",
+                        "content": turn_text,
+                    })
+                    saved_turns.append({
+                        "role": "assistant",
+                        "status": "clarification_needed",
+                        "resolved_question": standalone_q,
+                        "last_was_clarification": True,
+                        "clarification_options": gen_res.get("options", []),
+                    })
+                elif decision == "answer":
+                    query_spec = gen_res.get("query", {})
+                    slug = query_spec.get("collection")
+                    last_turn_res = {
+                        "status": "success",
+                        "query": query_spec,
+                        "resolved_question": standalone_q,
+                    }
+                    saved_turns.append({
+                        "role": "user",
+                        "content": turn_text,
+                    })
+                    saved_turns.append({
+                        "role": "assistant",
+                        "status": "success",
+                        "resolved_question": standalone_q,
+                        "file_slug": slug,
+                        "last_was_clarification": False,
+                    })
+                else:
+                    last_turn_res = {"status": decision}
+
+            if is_last:
+                expected = case["expected_last"]
+                assert last_turn_res["status"] == expected["status"], (
+                    f"Case {case['id']} last turn failed: expected status {expected['status']}, got {last_turn_res['status']}"
+                )
+                if expected["status"] == "clarification_needed":
+                    assert last_turn_res.get("clarification_question"), (
+                        f"Case {case['id']} missing clarification question"
+                    )
+                elif expected["status"] == "success":
+                    assert "query" in last_turn_res, f"Case {case['id']} missing query"
+                    q_spec = last_turn_res["query"]
+                    if case["id"] == "class_breakdown":
+                        # Must group by section for Class 8
+                        pipeline_str = str(q_spec.get("pipeline", []))
+                        assert "section" in pipeline_str
+                    elif case["id"] == "marks_lowest":
+                        # Must target marks and sort by avg_marks asc
+                        pipeline_str = str(q_spec.get("pipeline", []))
+                        assert "avg_marks" in pipeline_str
+                    elif case["id"] == "fee_pending":
+                        pipeline_str = str(q_spec.get("pipeline", []))
+                        assert "Pending" in pipeline_str
+                    elif case["id"] == "topic_switch_teachers":
+                        assert q_spec.get("collection") == "brightpath_teachers"
+

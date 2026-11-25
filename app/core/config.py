@@ -55,8 +55,8 @@ class Settings(BaseSettings):
     # AI / LLM Configuration
     LLM_PROVIDER: str = "fake"  # "gemini" | "openai_compat" | "azure" | "fake"
     LLM_FALLBACK_PROVIDER: Optional[str] = None
-    LLM_MAX_REQUESTS_PER_MINUTE: int = 10
-    LLM_MAX_CONCURRENCY: int = 3
+    LLM_MAX_REQUESTS_PER_MINUTE: int = 60
+    LLM_MAX_CONCURRENCY: int = 10
 
     # Azure OpenAI Configuration
     AZURE_OPENAI_ENDPOINT: str = ""
@@ -94,6 +94,7 @@ class Settings(BaseSettings):
     # URLs & Integrations
     FRONTEND_BASE_URL: str = "http://localhost:5173"
     FRONTEND_URL: str = "http://localhost:5173"
+    FRONTEND_INVITE_URL: str = "http://localhost:5173/accept-invite"
     SERVICE_TOKEN: str = "internal-service-secret-token"
 
     # Rate Limiting & Query Controls
@@ -102,6 +103,13 @@ class Settings(BaseSettings):
     MAX_ROWS: int = 100
     QUERY_TIMEOUT_SECONDS: int = 5
     HISTORY_TURNS: int = 6
+
+    # Multi-turn Follow-up Resolution Controls
+    FOLLOWUP_ENABLED: bool = True
+    FOLLOWUP_MAX_TURNS: int = 3
+    CONVERSATION_CONTEXT_TTL_HOURS: int = 6
+    FOLLOWUP_MAX_QUESTION_CHARS: int = 300
+    FOLLOWUP_TIMEOUT_SECONDS: int = 8
 
     # Company Data Import & Ingestion Controls
     IMPORT_MAX_FILE_MB: int = 5
@@ -124,6 +132,41 @@ class Settings(BaseSettings):
     TEXT_SEARCH_SNIPPET_CHARS: int = 600
     ANSWER_WRITER_ENABLED: bool = False
     ANSWER_WRITER_MAX_ROWS: int = 10
+
+    # Progressive User Profiling Settings
+    PROFILE_ENABLED: bool = True
+    PROFILE_FIELDS_ORDER: str = "name,company_name,interest"
+    PROFILE_PREFILL_FROM_ACCOUNT: bool = True
+    PROFILE_MIN_ANSWERS_BEFORE_FIRST_ASK: int = 2
+    PROFILE_ASK_EVERY_N_ANSWERS: int = 3
+    PROFILE_MAX_ASKS_PER_CONVERSATION: int = 3
+    PROFILE_MAX_ASKS_PER_FIELD: int = 2
+    PROFILE_EXTRACT_TIMEOUT_SECONDS: int = 4
+    PROFILE_CACHE_TTL_SECONDS: int = 60
+    PROFILE_SKIP_PHRASES: List[str] = [
+        "skip", "not now", "no thanks", "later", "pass", "baad mein", "rehne do"
+    ]
+    PROFILE_OPT_OUT_PHRASES: List[str] = [
+        "dont ask", "don't ask", "stop asking", "mat poochho", "mat poocho"
+    ]
+
+    # Cross-Document / Multi-Document Synthesis Settings
+    MULTIDOC_ENABLED: bool = True
+    MULTIDOC_MAX_DOCS_PER_QUERY: int = 6
+    MULTIDOC_MAX_RECORDS_PER_DOC: int = 200
+    MULTIDOC_MAX_MERGED_ROWS: int = 50
+    MULTIDOC_PLAN_TIMEOUT_SECONDS: int = 5
+    MULTIDOC_CACHE_TTL_SECONDS: int = 120
+    MULTIDOC_AUTO_DETECT_JOIN_KEYS: bool = True
+
+    # File Connections & Cross-File Join Controls
+    CONNECTIONS_MAX_PER_COMPANY: int = 20
+    QUERY_MAX_JOINS: int = 2
+    CONNECTION_MIN_MATCH_RATE: float = 0.5
+    CONNECTION_WARN_MATCH_RATE: float = 0.9
+    CONNECTION_SUGGEST_MIN_MATCH_RATE: float = 0.8
+    MULTI_PART_ENABLED: bool = True
+    MULTI_PART_MAX_PARTS: int = 3
 
     model_config = SettingsConfigDict(
         env_file=(str(BASE_DIR / ".env"), ".env"),

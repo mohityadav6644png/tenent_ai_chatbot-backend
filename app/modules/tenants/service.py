@@ -3,7 +3,8 @@ Tenants Service (app/modules/tenants/service.py)
 Super-admin tenant lifecycle: onboarding with admin invite, suspend, reactivate, schema sync.
 """
 
-from typing import Any, Dict
+from datetime import datetime, timedelta, timezone
+from typing import Any, Dict, Optional
 from app.core.email import send_tenant_onboarding_email
 from app.core.exceptions import (
     NotFoundError,
@@ -11,9 +12,13 @@ from app.core.exceptions import (
     UserExistsError,
     ValidationError,
 )
-from app.core.security import generate_opaque_token, hash_token
+from app.core.security import generate_invite_token, generate_opaque_token, hash_token
 from app.modules.audit.service import AuditService
-from app.modules.auth.models import create_invite_document, create_user_document
+from app.modules.auth.models import (
+    create_invite_document,
+    create_invite_token_document,
+    create_user_document,
+)
 from app.modules.tenants.interfaces import TenantRepoProtocol
 from app.modules.tenants.models import create_tenant_document
 
@@ -29,7 +34,13 @@ class TenantService:
         return {"summary": summary, "tenants": tenants}
 
     async def create_tenant(
-        self, company_name: str, admin_name: str, admin_email: str, monthly_query_limit: int, actor: str = "super_admin"
+        self,
+        company_name: str,
+        admin_name: str,
+        admin_email: str,
+        monthly_query_limit: int,
+        actor: str = "super_admin",
+        background_tasks: Optional[Any] = None,
     ) -> Dict[str, Any]:
         if monthly_query_limit not in [5000, 10000, 25000]:
             raise ValidationError("Monthly query limit must be 5000, 10000, or 25000.")
@@ -50,18 +61,38 @@ class TenantService:
             company_id=cid,
             is_active=False,
             is_invited=True,
+            status="invited",
+            must_change_password=True,
         )
+        uid = str(admin_doc["_id"])
 
-        raw_invite_token = generate_opaque_token(32)
+        raw_invite_token = generate_invite_token(32)
+        token_h = hash_token(raw_invite_token)
+        now = datetime.now(timezone.utc)
+        expires_at = now + timedelta(days=7)
+
+        invite_token_doc = create_invite_token_document(
+            token_hash=token_h,
+            company_id=cid,
+            user_id=uid,
+            expires_at=expires_at,
+        )
         invite_doc = create_invite_document(
-            company_id=cid, email=admin_email, name=admin_name, role="admin", token_hash=hash_token(raw_invite_token)
+            company_id=cid, email=admin_email, name=admin_name, role="admin", token_hash=token_h
         )
 
         try:
-            await self.repo.create_tenant_atomic(tenant_doc, admin_doc, invite_doc)
-            invite_email_sent = await send_tenant_onboarding_email(
-                admin_email, admin_name, raw_invite_token, company_name
-            )
+            try:
+                await self.repo.create_tenant_atomic(tenant_doc, admin_doc, invite_doc, invite_token_doc=invite_token_doc)
+            except TypeError:
+                await self.repo.create_tenant_atomic(tenant_doc, admin_doc, invite_doc)
+            if background_tasks and hasattr(background_tasks, "add_task"):
+                background_tasks.add_task(send_tenant_onboarding_email, admin_email, admin_name, raw_invite_token, company_name)
+                invite_email_sent = True
+            else:
+                invite_email_sent = await send_tenant_onboarding_email(
+                    admin_email, admin_name, raw_invite_token, company_name
+                )
             await self.audit.log_event(
                 actor=actor,
                 action="tenant_onboarded",
@@ -70,7 +101,7 @@ class TenantService:
             )
         except UserExistsError:
             raise
-        except Exception as exc:
+        except Exception:
             await self.audit.log_event(actor=actor, action="tenant_onboarded", target=cid, result="failed")
             raise
 

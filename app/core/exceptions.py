@@ -72,6 +72,11 @@ class LastAdminError(AppError):
         super().__init__("LAST_ADMIN", message, 409)
 
 
+class BadRequestError(AppError):
+    def __init__(self, message: str = "Bad request."):
+        super().__init__("BAD_REQUEST", message, 400)
+
+
 class ValidationError(AppError):
     def __init__(self, message: str = "Request validation failed."):
         super().__init__("VALIDATION_ERROR", message, 422)

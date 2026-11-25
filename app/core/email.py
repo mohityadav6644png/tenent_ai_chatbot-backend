@@ -173,7 +173,8 @@ async def send_invite_email(
 async def send_tenant_onboarding_email(
     email: str, name: str, token: str, company_name: str
 ) -> bool:
-    invite_url = f"{settings.FRONTEND_BASE_URL}/accept-invite?token={token}"
+    base_invite = getattr(settings, "FRONTEND_INVITE_URL", None) or f"{settings.FRONTEND_BASE_URL}/accept-invite"
+    invite_url = f"{base_invite}?token={token}"
     subject = f"Welcome to Your SaaS Platform - {company_name} Onboarded Successfully!"
     text = (
         f"Hello {name},\n\n"
