@@ -41,6 +41,11 @@ def generate_opaque_token(nbytes: int = 32) -> str:
     return secrets.token_hex(nbytes)
 
 
+def generate_invite_token(nbytes: int = 32) -> str:
+    """Generate cryptographically secure URL-safe invite token."""
+    return secrets.token_urlsafe(nbytes)
+
+
 def hash_token(token: str) -> str:
     """Return SHA-256 hash of a token for secure database storage."""
     return hashlib.sha256(token.encode("utf-8")).hexdigest()

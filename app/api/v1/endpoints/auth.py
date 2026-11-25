@@ -9,6 +9,7 @@ from fastapi.security import HTTPAuthorizationCredentials
 from app.api.deps import bearer_scheme, get_auth_service, get_tenant_context, verify_csrf
 from app.api.v1.schemas.auth import (
     AcceptInviteRequest,
+    AcceptInviteResponse,
     ForgotPasswordRequest,
     LoginRequest,
     LoginResponse,
@@ -68,7 +69,14 @@ async def logout(
         token = session
 
     if token:
-        await service.logout(token)
+        user_id = None
+        try:
+            from app.core.security import decode_token
+            payload = decode_token(token)
+            user_id = payload.get("sub")
+        except Exception:
+            pass
+        await service.logout(token, user_id=user_id)
     response.delete_cookie(key="access_token", path="/")
     response.delete_cookie(key="session", path="/")
     response.delete_cookie(key="csrf_token", path="/")
@@ -110,10 +118,22 @@ async def refresh_token(data: RefreshTokenRequest, service: AuthService = Depend
     return await service.refresh(data.refresh_token)
 
 
-@router.post("/accept-invite", response_model=MessageResponse)
-async def accept_invite(data: AcceptInviteRequest, service: AuthService = Depends(get_auth_service)):
-    result = await service.accept_invite(token=data.token, password=data.password)
-    return {"message": result["message"], "success": True}
+@router.post("/accept-invite", response_model=AcceptInviteResponse)
+async def accept_invite(
+    data: AcceptInviteRequest,
+    request: Request,
+    response: Response,
+    service: AuthService = Depends(get_auth_service),
+):
+    ip = request.client.host if request.client else "127.0.0.1"
+    ua = request.headers.get("User-Agent", "unknown")
+    result = await service.accept_invite(token=data.token, password=data.password, ip=ip, user_agent=ua)
+    if "access_token" in result and result["access_token"]:
+        response.set_cookie(key="access_token", value=result["access_token"], httponly=True, secure=settings.COOKIE_SECURE, samesite="lax", max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60, path="/")
+        response.set_cookie(key="session", value=result["access_token"], httponly=True, secure=settings.COOKIE_SECURE, samesite="lax", max_age=settings.SESSION_TTL_MINUTES * 60, path="/")
+    if "csrf_token" in result and result["csrf_token"]:
+        response.set_cookie(key="csrf_token", value=result["csrf_token"], httponly=False, secure=settings.COOKIE_SECURE, samesite="lax", max_age=settings.SESSION_TTL_MINUTES * 60, path="/")
+    return result
 
 
 @router.post("/forgot-password", status_code=status.HTTP_200_OK, dependencies=[Depends(verify_csrf)])

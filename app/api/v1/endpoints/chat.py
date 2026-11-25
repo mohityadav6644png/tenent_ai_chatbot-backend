@@ -3,7 +3,7 @@ Chat Endpoints (app/api/v1/endpoints/chat.py)
 NLP-to-SQL query execution, conversations list, and message feedback.
 """
 
-from fastapi import APIRouter, Depends, Request, Response, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Request, Response, status
 from app.api.deps import require_roles, verify_csrf
 from app.api.v1.schemas.chat import (
     ChatQueryRequest,
@@ -22,6 +22,7 @@ router = APIRouter(tags=["Chat"])
 async def execute_chat_query(
     data: ChatQueryRequest,
     request: Request,
+    background_tasks: BackgroundTasks,
     ctx: TenantContext = Depends(require_roles("employee", "company_admin")),
     service: QueryService = Depends(get_query_service),
 ):
@@ -34,6 +35,7 @@ async def execute_chat_query(
         question=data.question,
         history=history_dicts,
         conversation_id=data.conversation_id,
+        background_tasks=background_tasks,
     )
     result["request_id"] = req_id
     return result

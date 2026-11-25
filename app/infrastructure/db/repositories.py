@@ -6,9 +6,11 @@ Repository implementations for Auth, Tenants, Users, and Audit collections.
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from bson import ObjectId
+from pymongo import ReturnDocument
 from app.infrastructure.azure.redis_cache import get_cache_client
 from app.infrastructure.db.mongodb import (
     audit_events_collection,
+    invite_tokens_collection,
     invites_collection,
     password_resets_collection,
     sessions_collection,
@@ -37,6 +39,11 @@ class MongoAuthRepository:
         oid = ObjectId(user_id) if ObjectId.is_valid(user_id) else user_id
         await users_collection.update_one({"_id": oid}, {"$set": updates})
 
+    async def update_user_scoped(self, user_id: str, company_id: str, updates: Dict[str, Any]) -> None:
+        updates["updated_at"] = datetime.now(timezone.utc)
+        oid = ObjectId(user_id) if ObjectId.is_valid(user_id) else user_id
+        await users_collection.update_one({"_id": oid, "company_id": str(company_id)}, {"$set": updates})
+
     async def create_session(self, doc: Dict[str, Any]) -> None:
         await sessions_collection.insert_one(doc)
 
@@ -60,6 +67,24 @@ class MongoAuthRepository:
 
     async def get_invite_by_hash(self, token_hash: str) -> Optional[Dict[str, Any]]:
         return await invites_collection.find_one({"token_hash": token_hash, "status": "pending"})
+
+    async def claim_invite_token(self, token_hash: str) -> Optional[Dict[str, Any]]:
+        now = datetime.now(timezone.utc)
+        claimed = await invite_tokens_collection.find_one_and_update(
+            {"token_hash": token_hash, "used": False, "expires_at": {"$gt": now}},
+            {"$set": {"used": True, "used_at": now}},
+            return_document=ReturnDocument.AFTER,
+        )
+        if claimed:
+            return claimed
+        return await invites_collection.find_one_and_update(
+            {"token_hash": token_hash, "status": "pending", "expires_at": {"$gt": now}},
+            {"$set": {"status": "accepted", "used": True, "used_at": now}},
+            return_document=ReturnDocument.AFTER,
+        )
+
+    async def create_invite_token(self, doc: Dict[str, Any]) -> None:
+        await invite_tokens_collection.insert_one(doc)
 
     async def update_invite(self, invite_id: str, updates: Dict[str, Any]) -> None:
         oid = ObjectId(invite_id) if ObjectId.is_valid(invite_id) else invite_id

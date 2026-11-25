@@ -102,11 +102,14 @@ class SchemaCatalogRepo:
             pass
 
         ready_files = []
+        active_conns = []
         try:
-            from app.infrastructure.db.mongodb import company_files_collection
+            from app.infrastructure.db.mongodb import company_files_collection, file_connections_collection
             files_coll = self._app_db["company_files"] if self._app_db is not None else company_files_collection
             cursor = files_coll.find({"company_id": str(company_id), "status": "ready"}).sort("updated_at", -1)
             raw_files = await cursor.to_list(length=100)
+            raw_files_by_id = {str(f["_id"]): f for f in raw_files}
+            rf_by_id = {}
             for f in raw_files:
                 f_stats = f.get("stats", {}).get("columns", {})
                 cols = []
@@ -130,14 +133,70 @@ class SchemaCatalogRepo:
                             col_info["distinct_values"] = st.get("distinct_values")
                     cols.append(col_info)
 
-                ready_files.append({
+                rf_entry = {
                     "slug": f.get("slug", ""),
                     "name": f.get("name", ""),
                     "description": f.get("description", ""),
                     "row_count": f.get("row_count", 0),
                     "updated_at": f.get("updated_at"),
                     "columns": cols,
-                })
+                    "connections": [],
+                }
+                ready_files.append(rf_entry)
+                rf_by_id[str(f["_id"])] = rf_entry
+
+            conn_coll = self._app_db["file_connections"] if self._app_db is not None else file_connections_collection
+            c_cursor = conn_coll.find({"company_id": str(company_id), "status": "active"}).sort("created_at", -1)
+            active_conns = await c_cursor.to_list(length=100)
+            for conn in active_conns:
+                conn_id = str(conn.get("id") or conn.get("_id"))
+                conn["id"] = conn_id
+                left_id = str(conn.get("left_file_id"))
+                right_id = str(conn.get("right_file_id"))
+                left_rf = rf_by_id.get(left_id)
+                right_raw = raw_files_by_id.get(right_id)
+                if left_rf and right_raw:
+                    left_name = left_rf.get("name") or left_rf.get("slug")
+                    right_name = right_raw.get("name") or right_raw.get("slug")
+                    alias = conn.get("alias")
+                    conn["left_file_slug"] = left_rf.get("slug")
+                    conn["right_file_slug"] = right_raw.get("slug")
+                    conn["left_file_name"] = left_name
+                    conn["right_file_name"] = right_name
+                    rate = conn.get("match_rate", 0)
+                    pct = round(rate * 100, 1)
+                    pct_str = f"{int(pct)}" if pct == int(pct) else f"{pct}"
+                    desc = (
+                        f"Each row of {left_name} can be linked to one row of {right_name} "
+                        f"through {conn.get('left_key')} = {conn.get('right_key')}; {pct_str}% of rows match"
+                    )
+                    left_rf["connections"].append({
+                        "id": conn_id,
+                        "alias": alias,
+                        "description": desc,
+                        "left_key": conn.get("left_key"),
+                        "right_key": conn.get("right_key"),
+                    })
+                    r_stats = right_raw.get("stats", {}).get("columns", {})
+                    for rc in right_raw.get("columns", []):
+                        if rc.get("hidden"):
+                            continue
+                        rk = rc["key"]
+                        joined_col_info = {
+                            "key": f"{alias}.{rk}",
+                            "label": f"{alias}.{rc.get('label', rk)}",
+                            "type": rc.get("type", "text"),
+                            "meaning": rc.get("meaning"),
+                            "example": rc.get("example"),
+                        }
+                        if rk in r_stats:
+                            rst = r_stats[rk]
+                            if "min" in rst:
+                                joined_col_info["min"] = rst.get("min")
+                                joined_col_info["max"] = rst.get("max")
+                            if "distinct_values" in rst and rst.get("distinct_values") is not None:
+                                joined_col_info["distinct_values"] = rst.get("distinct_values")
+                        left_rf["columns"].append(joined_col_info)
         except Exception:
             pass
 
@@ -174,5 +233,12 @@ class SchemaCatalogRepo:
         for rf in ready_files:
             file_fields[rf["slug"]] = {c["key"] for c in rf.get("columns", []) if "key" in c}
         catalog["file_fields"] = file_fields
+
+        catalog["connections"] = active_conns
+        catalog["model_rules"] = [
+            "Use the file that has MANY rows per linked row as the primary (marks, orders, deals) and reference linked fields as '$alias.column'.",
+            f"Use at most {getattr(settings, 'QUERY_MAX_JOINS', 2)} connections per question.",
+            "Never invent connections.",
+        ]
 
         return catalog

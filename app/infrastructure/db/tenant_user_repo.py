@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 from bson import ObjectId
 from app.core.exceptions import UserExistsError
 from app.infrastructure.db.mongodb import (
+    invite_tokens_collection,
     invites_collection,
     tenants_collection,
     users_collection,
@@ -32,12 +33,20 @@ class MongoTenantRepository:
     async def get_tenant_by_name(self, name: str) -> Optional[Dict[str, Any]]:
         return await tenants_collection.find_one({"name": {"$regex": f"^{name.strip()}$", "$options": "i"}})
 
-    async def create_tenant_atomic(self, tenant_doc: Dict[str, Any], admin_doc: Dict[str, Any], invite_doc: Dict[str, Any]) -> str:
+    async def create_tenant_atomic(
+        self,
+        tenant_doc: Dict[str, Any],
+        admin_doc: Dict[str, Any],
+        invite_doc: Dict[str, Any],
+        invite_token_doc: Optional[Dict[str, Any]] = None,
+    ) -> str:
         if await users_collection.find_one({"email": admin_doc["email"]}):
             raise UserExistsError("Admin user with this email already exists.")
         await tenants_collection.insert_one(tenant_doc)
         await users_collection.insert_one(admin_doc)
         await invites_collection.insert_one(invite_doc)
+        if invite_token_doc:
+            await invite_tokens_collection.insert_one(invite_token_doc)
         return str(tenant_doc["_id"])
 
     async def update_tenant(self, tenant_id: str, updates: Dict[str, Any]) -> None:

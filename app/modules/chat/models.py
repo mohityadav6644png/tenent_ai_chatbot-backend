@@ -33,19 +33,34 @@ def create_message_document(
     status: str,
     answer: Optional[Dict[str, Any]] = None,
     meta: Optional[Dict[str, Any]] = None,
+    resolved_question: Optional[str] = None,
+    file_slug: Optional[str] = None,
+    refusal_reason: Optional[str] = None,
+    output_columns: Optional[List[str]] = None,
+    original_text: Optional[str] = None,
 ) -> dict:
     now = datetime.now(timezone.utc)
-    return {
+    doc = {
         "_id": ObjectId(),
         "conversation_id": str(conversation_id),
         "company_id": str(company_id),
         "user_id": str(user_id),
         "question": question,
+        "original_text": original_text if original_text is not None else question,
         "status": status,
         "answer": answer or {},
         "meta": meta or {},
         "created_at": now,
     }
+    if resolved_question is not None:
+        doc["resolved_question"] = resolved_question
+    if file_slug is not None:
+        doc["file_slug"] = file_slug
+    if refusal_reason is not None:
+        doc["refusal_reason"] = refusal_reason
+    if output_columns is not None:
+        doc["output_columns"] = output_columns
+    return doc
 
 
 def create_generated_query_document(

@@ -39,6 +39,15 @@ class AcceptInviteRequest(BaseModel):
     password: str = Field(..., min_length=10, description="Password must be at least 10 characters long")
 
 
+class AcceptInviteResponse(BaseModel):
+    access_token: str
+    token_type: Optional[str] = "bearer"
+    refresh_token: Optional[str] = None
+    user: Optional[UserProfileResponse] = None
+    message: Optional[str] = "Account successfully activated."
+    success: Optional[bool] = True
+
+
 class ForgotPasswordRequest(BaseModel):
     email: EmailStr
 

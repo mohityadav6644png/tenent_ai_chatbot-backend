@@ -4,7 +4,7 @@ Super admin management of tenant lifecycle, onboarding, status, and schema versi
 """
 
 from typing import Optional
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Request, status
 from app.api.deps import (
     bearer_scheme,
     get_current_user,
@@ -42,6 +42,7 @@ async def list_tenants(
 @router.post("", response_model=TenantCreateResponse, status_code=status.HTTP_201_CREATED, dependencies=[Depends(verify_csrf)])
 async def create_tenant(
     data: TenantCreateRequest,
+    background_tasks: BackgroundTasks,
     ctx: TenantContext = Depends(require_roles("super_admin")),
     service: TenantService = Depends(get_tenant_service),
 ):
@@ -51,6 +52,7 @@ async def create_tenant(
         admin_email=data.admin_email,
         monthly_query_limit=data.monthly_query_limit,
         actor=ctx.name or ctx.user_id or "super_admin",
+        background_tasks=background_tasks,
     )
 
 

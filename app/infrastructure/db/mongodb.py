@@ -42,6 +42,10 @@ revoked_tokens_collection = database["revoked_tokens"]
 company_records_collection = database["company_records"]
 dataset_catalog_collection = database["dataset_catalog"]
 company_files_collection = database["company_files"]
+user_profiles_collection = database["user_profiles"]
+profile_session_state_collection = database["profile_session_state"]
+invite_tokens_collection = database["invite_tokens"]
+file_connections_collection = database["file_connections"]
 
 
 def get_business_collection(ctx: Any, name: str):
@@ -69,6 +73,11 @@ async def connect_to_mongodb():
         await company_records_collection.create_index([("company_id", ASCENDING), ("created_at", ASCENDING)])
         await company_files_collection.create_index([("company_id", ASCENDING), ("slug", ASCENDING)], unique=True)
         await company_files_collection.create_index([("company_id", ASCENDING), ("updated_at", ASCENDING)])
+        await user_profiles_collection.create_index([("company_id", ASCENDING), ("user_id", ASCENDING)], unique=True)
+        await profile_session_state_collection.create_index([("company_id", ASCENDING), ("user_id", ASCENDING), ("conversation_id", ASCENDING)], unique=True)
+        await profile_session_state_collection.create_index("updated_at", expireAfterSeconds=2592000)
+        await invite_tokens_collection.create_index("token_hash", unique=True)
+        await invite_tokens_collection.create_index("expires_at", expireAfterSeconds=0)
         logger.info("MongoDB app client connected and indexes verified")
     except Exception as exc:
         logger.warning(f"Could not connect to MongoDB or set indexes: {exc}")

@@ -8,6 +8,7 @@ from typing import Any, Dict, Optional, Tuple
 from app.core.config import settings
 from app.core.email import send_invite_email, send_reset_email
 from app.core.exceptions import (
+    BadRequestError,
     InvalidCredentialsError,
     RateLimitedError,
     UnauthenticatedError,
@@ -119,6 +120,11 @@ class AuthService:
                 await self.repo.delete_session(hash_token(token))
             except Exception:
                 pass
+        if user_id:
+            try:
+                await self.repo.delete_user_sessions(user_id)
+            except Exception:
+                pass
 
     async def refresh(self, refresh_token: str) -> Dict[str, Any]:
         if not refresh_token:
@@ -181,25 +187,103 @@ class AuthService:
             "user": user_profile,
         }
 
-    async def accept_invite(self, token: str, password: str) -> Dict[str, Any]:
+    async def accept_invite(
+        self,
+        token: str,
+        password: str,
+        ip: str = "127.0.0.1",
+        user_agent: str = "unknown",
+    ) -> Dict[str, Any]:
+        if not token or not str(token).strip():
+            raise BadRequestError("Invitation token is required.")
         if len(password) < 10:
-            raise ValidationError("Password must be at least 10 characters long.")
-        token_h = hash_token(token)
-        invite = await self.repo.get_invite_by_hash(token_h)
-        if not invite:
-            raise ValidationError("Invalid or expired invitation link.")
+            raise BadRequestError("Password must be at least 10 characters long.")
 
-        user = await self.repo.get_user_by_email(invite["email"])
+        token_h = hash_token(token.strip())
+        claimed = await self.repo.claim_invite_token(token_h)
+        if not claimed:
+            raise BadRequestError("Invalid, expired, or already used invitation token.")
+
+        company_id = str(claimed.get("company_id", ""))
+        user_id = str(claimed.get("user_id", ""))
+
+        user = None
+        if user_id:
+            user = await self.repo.get_user_by_id(user_id)
+        elif "email" in claimed:
+            user = await self.repo.get_user_by_email(claimed["email"])
+            if user:
+                user_id = str(user["_id"])
+
+        if not user or not user_id:
+            raise BadRequestError("User associated with invitation was not found.")
+
+        # Enforce company_id scoping
+        if str(user.get("company_id", "")) != company_id:
+            raise BadRequestError("Invalid invitation token.")
+
+        now = datetime.now(timezone.utc)
         hashed = hash_password(password)
-        if user:
-            await self.repo.update_user(str(user["_id"]), {"password": hashed, "is_active": True, "is_invited": False})
-        await self.repo.update_invite(str(invite["_id"]), {"status": "accepted"})
+        updates = {
+            "password": hashed,
+            "password_hash": hashed,
+            "status": "active",
+            "is_active": True,
+            "is_invited": False,
+            "must_change_password": False,
+            "activated_at": now,
+            "is_verified": True,
+        }
+        await self.repo.update_user_scoped(user_id=user_id, company_id=company_id, updates=updates)
 
-        tenant = await self.repo.get_tenant_by_id(invite["company_id"])
-        if tenant and tenant.get("status") == "onboarding":
-            await self.repo.update_tenant(str(tenant["_id"]), {"status": "active"})
+        tenant = await self.repo.get_tenant_by_id(company_id)
+        if tenant and tenant.get("status") in ["pending_onboarding", "onboarding"]:
+            await self.repo.update_tenant(company_id, {"status": "active"})
 
-        return {"message": "Account successfully activated. You can now login."}
+        role = user.get("role") or "company_admin"
+        access_token = create_access_token(
+            user_id=user_id,
+            role=role,
+            company_id=company_id,
+            email=user.get("email"),
+            name=user.get("name"),
+        )
+        refresh_token = create_refresh_token(user_id=user_id)
+
+        session_doc = create_session_document(
+            user_id=user_id,
+            token_hash=hash_token(access_token),
+            ttl_minutes=settings.SESSION_TTL_MINUTES,
+            ip=ip,
+            user_agent=user_agent,
+        )
+        await self.repo.create_session(session_doc)
+        csrf_token = generate_csrf_token()
+
+        user_profile = {
+            "id": user_id,
+            "name": user.get("name") or "Company Admin",
+            "email": user.get("email", ""),
+            "role": role,
+            "company_name": tenant.get("name") if tenant else None,
+            "is_verified": True,
+        }
+
+        from app.core.logging import logger
+        logger.info(
+            "Company admin invite accepted",
+            extra={"company_id": company_id, "user_id": user_id, "status": "active"},
+        )
+
+        return {
+            "access_token": access_token,
+            "token_type": "bearer",
+            "refresh_token": refresh_token,
+            "csrf_token": csrf_token,
+            "user": user_profile,
+            "message": "Account successfully activated.",
+            "success": True,
+        }
 
     async def forgot_password(self, email: str) -> None:
         user = await self.repo.get_user_by_email(email)

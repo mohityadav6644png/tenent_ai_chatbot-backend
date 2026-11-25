@@ -37,12 +37,16 @@ class CompanyFilesService:
         tenant_repo: TenantSchemaProtocol,
         cache: CacheProtocol,
         audit: Optional[AuditServiceProtocol] = None,
+        file_connections_service: Optional[Any] = None,
+        enrichment_worker: Optional[Any] = None,
     ):
         self.repo = repo
         self.parser = parser
         self.tenant_repo = tenant_repo
         self.cache = cache
         self.audit = audit
+        self.file_connections_service = file_connections_service
+        self.enrichment_worker = enrichment_worker
 
     async def _check_rate_limit(self, company_id: str) -> None:
         key = f"rate:company_files_import:{company_id}"
@@ -260,6 +264,13 @@ class CompanyFilesService:
             metadata={"inserted": len(valid_rows), "skipped": skipped_count},
         )
 
+        if self.file_connections_service:
+            try:
+                import asyncio
+                asyncio.create_task(self.file_connections_service.generate_suggestions(company_id))
+            except Exception:
+                pass
+
         return {
             "id": str(file_id),
             "status": "ready",
@@ -388,6 +399,13 @@ class CompanyFilesService:
                 metadata={"fields_updated": list(doc_updates.keys())},
             )
 
+            if "columns" in doc_updates and self.enrichment_worker:
+                try:
+                    import asyncio
+                    asyncio.create_task(self.enrichment_worker.on_file_updated(company_id, file_id))
+                except Exception:
+                    pass
+
         return await self.get_file_detail(company_id, file_id)
 
     async def upload_file(
@@ -486,6 +504,19 @@ class CompanyFilesService:
             metadata={"inserted": len(valid_rows), "skipped": skipped_count, "mode": upload_mode},
         )
 
+        if self.enrichment_worker:
+            try:
+                import asyncio
+                asyncio.create_task(self.enrichment_worker.on_file_updated(company_id, file_id))
+            except Exception:
+                pass
+        if self.file_connections_service:
+            try:
+                import asyncio
+                asyncio.create_task(self.file_connections_service.generate_suggestions(company_id))
+            except Exception:
+                pass
+
         return {
             "inserted": len(valid_rows),
             "skipped": skipped_count,
@@ -501,6 +532,13 @@ class CompanyFilesService:
 
         await self.repo.delete_all_file_rows(company_id, file_id)
         await self.repo.delete_file_record(company_id, file_id)
+
+        if self.enrichment_worker:
+            try:
+                import asyncio
+                asyncio.create_task(self.enrichment_worker.on_file_deleted(company_id, file_id))
+            except Exception:
+                pass
 
         await self.tenant_repo.bump_schema_version(company_id)
         await self.cache.clear_tenant(company_id)
