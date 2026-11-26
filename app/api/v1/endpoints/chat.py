@@ -28,6 +28,9 @@ async def execute_chat_query(
 ):
     """Execute natural language SQL query scoped strictly by authenticated company_id."""
     req_id = getattr(request.state, "request_id", None) or request_id_ctx.get() or "unknown"
+    from app.core.metrics import init_request_metrics
+    metrics = init_request_metrics(req_id)
+    metrics.stage_timings_ms["auth_session"] = 0.5
     history_dicts = [h.model_dump() for h in data.history]
     result = await service.answer(
         company_id=ctx.company_id,

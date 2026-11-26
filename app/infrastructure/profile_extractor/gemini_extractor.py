@@ -95,6 +95,8 @@ class GeminiProfileExtractor(ProfileExtractor):
                 pt = resp.usage_metadata.prompt_token_count or 0
                 ct = resp.usage_metadata.candidates_token_count or 0
                 await record_tenant_token_usage("system", pt + ct)
+            from app.core.metrics import extract_and_record_tokens
+            extract_and_record_tokens(resp, "profile", self.model_name)
 
             raw_text = resp.text or "{}"
             parsed = json.loads(raw_text)

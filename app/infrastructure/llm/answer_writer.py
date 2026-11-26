@@ -51,6 +51,8 @@ class LlmAnswerWriter(AnswerWriterProtocol):
                 model=settings.GEMINI_MODEL,
                 contents=prompt,
             )
+            from app.core.metrics import extract_and_record_tokens
+            extract_and_record_tokens(res, "answer_writer", settings.GEMINI_MODEL or "gemini-3.5-flash-lite")
             return res.text.strip() if res and res.text else None
         elif provider == "openai_compat":
             from app.infrastructure.llm.openai_compat_client import get_openai_compat_client

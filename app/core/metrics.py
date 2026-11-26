@@ -137,3 +137,44 @@ def measure_stage(stage_name: str):
             yield
     else:
         yield
+
+
+def extract_and_record_tokens(
+    response: Any,
+    purpose: str,
+    model: str,
+    retries: int = 0,
+) -> None:
+    """Extract token counts from GenAI/OpenAI response usage_metadata and record to current metrics."""
+    m = get_current_metrics()
+    if not m:
+        return
+    prompt_tokens = 0
+    output_tokens = 0
+    total_tokens = 0
+    cached_tokens = 0
+    thinking_tokens = 0
+
+    if hasattr(response, "usage_metadata") and response.usage_metadata:
+        um = response.usage_metadata
+        prompt_tokens = getattr(um, "prompt_token_count", 0) or 0
+        output_tokens = getattr(um, "candidates_token_count", 0) or 0
+        total_tokens = getattr(um, "total_token_count", 0) or (prompt_tokens + output_tokens)
+        cached_tokens = getattr(um, "cached_content_token_count", 0) or 0
+        thinking_tokens = getattr(um, "thinking_token_count", 0) or getattr(um, "reasoning_token_count", 0) or 0
+    elif hasattr(response, "usage") and response.usage:
+        u = response.usage
+        prompt_tokens = getattr(u, "prompt_tokens", 0) or 0
+        output_tokens = getattr(u, "completion_tokens", 0) or 0
+        total_tokens = getattr(u, "total_tokens", 0) or (prompt_tokens + output_tokens)
+
+    m.record_tokens(
+        purpose=purpose,
+        model=model,
+        prompt_tokens=prompt_tokens,
+        output_tokens=output_tokens,
+        total_tokens=total_tokens,
+        thinking_tokens=thinking_tokens,
+        cached_tokens=cached_tokens,
+        retries=retries,
+    )

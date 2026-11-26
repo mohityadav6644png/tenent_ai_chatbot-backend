@@ -93,6 +93,8 @@ class ConnectionLLMReviewer:
                 resp = await client.aio.models.generate_content(
                     model=model_name, contents=prompt, config=config
                 )
+            from app.core.metrics import extract_and_record_tokens
+            extract_and_record_tokens(resp, "connection_review", model_name)
             return resp.text or ""
         elif self.provider == "openai_compat":
             from app.infrastructure.llm.openai_compat_client import get_openai_compat_client

@@ -290,6 +290,8 @@ class QueryPlanGenerator(SQLGeneratorProtocol):
                     tokens = 0
                     if hasattr(response, "usage_metadata") and response.usage_metadata:
                         tokens = getattr(response.usage_metadata, "total_token_count", 0) or 0
+                    from app.core.metrics import extract_and_record_tokens
+                    extract_and_record_tokens(response, "generator", model_name, retries=attempt)
                     return text, tokens
                 except errors.APIError as exc:
                     safe_log_llm_error("gemini", exc)

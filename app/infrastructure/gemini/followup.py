@@ -96,5 +96,7 @@ class GeminiFollowUpResolver(FollowUpResolver):
             tokens = getattr(response.usage_metadata, "total_token_count", 0) or 0
         if tokens > 0:
             await record_tenant_token_usage(company_id, tokens)
+        from app.core.metrics import extract_and_record_tokens
+        extract_and_record_tokens(response, "followup", self.model_name)
 
         return json.loads(text)

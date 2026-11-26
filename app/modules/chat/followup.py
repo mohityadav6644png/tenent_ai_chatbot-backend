@@ -182,8 +182,10 @@ class FollowUpService:
         if not turns:
             return fallback_result
 
-        if is_clearly_independent(original, catalog):
-            return fallback_result
+        from app.core.metrics import measure_stage
+        with measure_stage("followup_gate"):
+            if is_clearly_independent(original, catalog):
+                return fallback_result
 
         if not self.resolver:
             return fallback_result
@@ -191,15 +193,16 @@ class FollowUpService:
         sanitized_context = build_sanitized_turn_context(turns)
 
         try:
-            raw_output = await asyncio.wait_for(
-                self.resolver.resolve(
-                    new_message=original,
-                    turns=sanitized_context["turns"],
-                    catalog=catalog,
-                    company_id=company_id,
-                ),
-                timeout=settings.FOLLOWUP_TIMEOUT_SECONDS,
-            )
+            with measure_stage("followup_llm"):
+                raw_output = await asyncio.wait_for(
+                    self.resolver.resolve(
+                        new_message=original,
+                        turns=sanitized_context["turns"],
+                        catalog=catalog,
+                        company_id=company_id,
+                    ),
+                    timeout=settings.FOLLOWUP_TIMEOUT_SECONDS,
+                )
             validated = validate_resolver_output(raw_output, original)
             if validated is None:
                 logger.warning("followup_resolver_failed reason=INVALID_OUTPUT")
