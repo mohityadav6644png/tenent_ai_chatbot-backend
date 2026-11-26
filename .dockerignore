@@ -1,0 +1,40 @@
+# backend/.dockerignore
+# Exclude local virtual environments, secrets, test files, and caches from Docker images
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+
+# Secrets & Credentials
+.env
+.env.*
+!.env.example
+CREDENTIALS.md
+
+# Python cache & bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Testing & Linting
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+tests/
+
+# Build artifacts
+dist/
+build/
+*.egg-info/
+
+# Unused SQL configs
+alembic.ini
+
+# Logs & scratch
+*.log
+scratch/
