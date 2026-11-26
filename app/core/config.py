@@ -67,7 +67,7 @@ class Settings(BaseSettings):
 
     # Gemini Free Tier Configuration
     GEMINI_API_KEY: Optional[SecretStr] = None
-    GEMINI_MODEL: Optional[str] = None
+    GEMINI_MODEL: Optional[str] = "gemini-3.5-flash-lite"
     GEMINI_MAX_RETRIES: int = 2
 
     # OpenAI-Compatible Configuration (Groq, OpenRouter, etc.)
@@ -133,6 +133,10 @@ class Settings(BaseSettings):
     ANSWER_WRITER_ENABLED: bool = False
     ANSWER_WRITER_MAX_ROWS: int = 10
 
+    # Pipeline Metrics & Instrumentation
+    CHAT_METRICS_LOG: bool = True
+    CHAT_DEBUG_METRICS: bool = False
+
     # Progressive User Profiling Settings
     PROFILE_ENABLED: bool = True
     PROFILE_FIELDS_ORDER: str = "name,company_name,interest"
@@ -167,6 +171,17 @@ class Settings(BaseSettings):
     CONNECTION_SUGGEST_MIN_MATCH_RATE: float = 0.8
     MULTI_PART_ENABLED: bool = True
     MULTI_PART_MAX_PARTS: int = 3
+
+    # Auto File Connections & Relationship Detection
+    AUTO_CONNECT_MODE: str = "auto_high"  # "off" | "suggest" | "auto_high"
+    AUTO_CONNECT_HIGH_CONFIDENCE: float = 0.85
+    AUTO_CONNECT_MIN_CONTAINMENT: float = 0.9
+    AUTO_CONNECT_SUGGEST_CONFIDENCE: float = 0.6
+    AUTO_CONNECT_LLM_REVIEW: bool = True
+    AUTO_CONNECT_TIME_BUDGET_SECONDS: int = 30
+    AUTO_CONNECT_MAX_CANDIDATES_PER_PAIR: int = 3
+    PROFILE_CATEGORY_MAX_DISTINCT: int = 50
+    MODERATION_MAX_FLAGGED_CELL_RATIO: float = 0.02
 
     model_config = SettingsConfigDict(
         env_file=(str(BASE_DIR / ".env"), ".env"),

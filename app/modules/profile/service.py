@@ -120,46 +120,24 @@ class ProfileService:
 
         return None, None
 
+    async def extract_and_merge(
+        self, company_id: str, user_id: str, message: str, pending_field: Optional[str] = None
+    ) -> Tuple[Optional[ExtractionResult], UserProfile, Dict[str, Any]]:
+        allowed = [f.strip() for f in settings.PROFILE_FIELDS_ORDER.split(",") if f.strip()]
+        result = await self.extractor.extract(message, allowed, pending_field=pending_field)
+        validated = _validate_extracted(result)
+        prof = await self.repo.get_profile(company_id, user_id)
+        if not prof:
+            prof = await self.get_or_init_profile(company_id, user_id)
+        if validated:
+            prof = await self.repo.merge_profile_fields(company_id, user_id, validated, "user_message", result.corrections)
+        return result, prof, validated
+
     async def extract_background(self, company_id: str, user_id: str, message: str) -> None:
         try:
-            # 1. Check if background profiling is enabled
             if not getattr(settings, "PROFILE_ENABLED", True):
                 return
-
-            # 2. Check if user has an active session (skip if user has logged out)
-            import sys
-            if "pytest" not in sys.modules and settings.ENVIRONMENT != "testing":
-                from datetime import datetime, timezone
-                from app.infrastructure.db.mongodb import sessions_collection, tenants_collection
-                from bson import ObjectId
-
-                active_session_count = await sessions_collection.count_documents({
-                    "user_id": str(user_id),
-                    "expires_at": {"$gt": datetime.now(timezone.utc)},
-                })
-                if active_session_count == 0:
-                    logger.info("Skipping background AI extraction: user is logged out or session expired", extra={"user_id": user_id})
-                    return
-
-                # 3. Cost & budget guardrail: check tenant usage limit before burning AI tokens in background
-                tenant_doc = None
-                if ObjectId.is_valid(company_id):
-                    tenant_doc = await tenants_collection.find_one({"_id": ObjectId(company_id)})
-                else:
-                    tenant_doc = await tenants_collection.find_one({"_id": company_id})
-
-                if tenant_doc:
-                    monthly_limit = tenant_doc.get("monthly_query_limit", 10000)
-                    queries_month = tenant_doc.get("queries_month", 0)
-                    if queries_month >= monthly_limit * 0.95:
-                        logger.info("Skipping background AI extraction: tenant near query budget limit", extra={"company_id": company_id})
-                        return
-
-            allowed = [f.strip() for f in settings.PROFILE_FIELDS_ORDER.split(",") if f.strip()]
-            res = await self.extractor.extract(message, allowed, pending_field=None)
-            validated = _validate_extracted(res)
-            if validated:
-                await self.repo.merge_profile_fields(company_id, user_id, validated, "user_message", res.corrections)
+            await self.extract_and_merge(company_id, user_id, message)
         except Exception as exc:
             logger.warning(f"bg_extraction_error: {type(exc).__name__}")
 

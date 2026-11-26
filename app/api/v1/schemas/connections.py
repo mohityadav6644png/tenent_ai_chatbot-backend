@@ -23,10 +23,24 @@ class ConnectionListItemSchema(BaseModel):
     status: str
     match_rate: float
     updated_at: Optional[datetime] = None
+    origin: Optional[str] = "manual"
+    confidence: Optional[float] = None
+    confidence_label: Optional[str] = None
+    review_needed: Optional[bool] = False
+    normalization_level: Optional[int] = 0
+    evidence: Optional[dict] = None
+    reason_codes: Optional[List[str]] = None
 
 
 class ConnectionsListResponse(BaseModel):
     connections: List[ConnectionListItemSchema]
+
+
+class ConnectionScanResponse(BaseModel):
+    status: str
+    last_scan_at: Optional[datetime] = None
+    counts: Optional[dict] = None
+    message: Optional[str] = None
 
 
 class PreviewConnectionRequest(BaseModel):

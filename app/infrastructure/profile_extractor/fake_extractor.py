@@ -28,12 +28,16 @@ class FakeProfileExtractor(ProfileExtractor):
         remaining_question = None
 
         # Check for both (e.g. "I'm Mohit, show me total sales")
-        split_match = re.split(r"[,;]\s*(?=show|what|how|which|can|tell|list|\?)", msg, flags=re.IGNORECASE)
+        split_match = re.split(r"[,;]\s*(?=show|what|how|which|can|tell|list|count|\?)", msg, flags=re.IGNORECASE)
         profile_part = split_match[0].strip()
         question_part = split_match[1].strip() if len(split_match) > 1 else None
 
         # Name patterns
-        m_name = re.search(r"(?:my name is|i am|i'm|call me)\s+([A-Za-z\s.'-]+)", profile_part, re.IGNORECASE)
+        m_name = re.search(
+            r"(?:my name is|i am|i'm|call me)\s+([A-Za-z.'-]+(?:\s+[A-Za-z.'-]+)*?)(?:\s+(?:from|at|work at|with)\b|$)",
+            profile_part,
+            re.IGNORECASE,
+        )
         if m_name and "name" in allowed_fields:
             name = m_name.group(1).strip()
         elif pending_field == "name" and len(msg.split()) <= 4 and "?" not in msg:
@@ -47,6 +51,9 @@ class FakeProfileExtractor(ProfileExtractor):
         elif pending_field == "company_name" and "?" not in msg and len(msg.split()) <= 6:
             company_name = msg.strip()
 
+        if name and company_name:
+            name = re.sub(rf"\s+(?:from|at|work at|with)\s+{re.escape(company_name)}$", "", name, flags=re.IGNORECASE).strip()
+
         # Interest patterns
         m_int = re.search(r"(?:interested in|looking for)\s+([A-Za-z0-9\s,]+)", profile_part, re.IGNORECASE)
         if m_int and "interest" in allowed_fields:
@@ -54,11 +61,11 @@ class FakeProfileExtractor(ProfileExtractor):
         elif pending_field == "interest" and "?" not in msg:
             interests = [i.strip() for i in msg.split(",") if i.strip()]
 
+        if name:
+            corrections.append("name")
+        if company_name:
+            corrections.append("company_name")
         if "correction" in low or "actually" in low:
-            if name:
-                corrections.append("name")
-            if company_name:
-                corrections.append("company_name")
             if interests:
                 corrections.append("interest")
 

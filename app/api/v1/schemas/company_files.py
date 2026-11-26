@@ -5,7 +5,7 @@ Request and response Pydantic models for admin-defined company CSV files.
 
 from datetime import datetime
 from typing import Any, Dict, List, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class CompanyFileColumnMeta(BaseModel):
@@ -30,19 +30,47 @@ class PatchCompanyFileRequest(BaseModel):
 
 class PreviewColumnResponse(BaseModel):
     key: str
-    label: str
-    type: str  # text | number | date | boolean
+    label: Optional[str] = None
+    type: str = "text"  # text | number | date | boolean
     example: Any = None
     suggested_hidden: bool = False
+    role: Optional[str] = None
+    role_confidence: Optional[float] = None
+    profile: Optional[Dict[str, Any]] = None
+    linked_to: Optional[List[Dict[str, Any]]] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def populate_defaults(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if not data.get("label"):
+                data["label"] = data.get("key", "")
+            if not data.get("type"):
+                data["type"] = "text"
+        return data
 
 
 class FileDetailColumnResponse(BaseModel):
     key: str
-    label: str
-    type: str
+    label: Optional[str] = None
+    type: str = "text"
     example: Any = None
     meaning: Optional[str] = None
     hidden: bool = False
+    role: Optional[str] = None
+    role_confidence: Optional[float] = None
+    profile: Optional[Dict[str, Any]] = None
+    linked_to: Optional[List[Dict[str, Any]]] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def populate_defaults(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if not data.get("label"):
+                data["label"] = data.get("key", "")
+            if not data.get("type"):
+                data["type"] = "text"
+        return data
 
 
 class PreviewError(BaseModel):
@@ -67,6 +95,8 @@ class CompanyFilePreviewResponse(BaseModel):
     sample_rows: List[Dict[str, Any]]
     errors: List[PreviewError]
     limits: PreviewLimits
+    data_health: Optional[Dict[str, Any]] = None
+    detected_connections: Optional[List[Dict[str, Any]]] = None
 
 
 class CreateCompanyFileResponse(BaseModel):
@@ -93,6 +123,7 @@ class CompanyFileListItem(BaseModel):
     updated_at: datetime
     status: str
     upload_mode: str
+    columns: Optional[List[FileDetailColumnResponse]] = None
 
 
 class CompanyFilesSummary(BaseModel):

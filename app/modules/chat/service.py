@@ -51,6 +51,19 @@ class QueryService:
         self.profile_service = profile_service
         self.multidoc_service = multidoc_service
 
+    def _finalize_result(self, res: Dict[str, Any]) -> Dict[str, Any]:
+        from app.core.metrics import get_current_metrics
+        metrics = get_current_metrics()
+        if metrics:
+            status = res.get("status", "success")
+            cache_status = res.get("meta", {}).get("cache", "miss")
+            metrics.finish(status=status, cache_status=cache_status)
+            if getattr(settings, "CHAT_DEBUG_METRICS", False):
+                res["meta"]["timings_ms"] = metrics.stage_timings_ms
+                res["meta"]["tokens"] = metrics.token_usage
+                res["meta"]["catalog_chars"] = metrics.catalog_chars
+        return res
+
     async def _attach_profile_prompt(
         self,
         res: Dict[str, Any],
@@ -61,7 +74,7 @@ class QueryService:
     ) -> Dict[str, Any]:
         if not self.profile_service or not profile or not conversation_id:
             res["profile_prompt"] = None
-            return res
+            return self._finalize_result(res)
         is_success = bool(res.get("status") == "success")
         prompt = await self.profile_service.post_turn_prompt(
             company_id=company_id,
@@ -71,7 +84,7 @@ class QueryService:
             is_success=is_success,
         )
         res["profile_prompt"] = prompt
-        return res
+        return self._finalize_result(res)
 
     async def answer(
         self,
@@ -82,78 +95,132 @@ class QueryService:
         conversation_id: Optional[str] = None,
         background_tasks: Optional[Any] = None,
     ) -> Dict[str, Any]:
+        from app.core.metrics import get_current_metrics, init_request_metrics
+        metrics = get_current_metrics()
+        if not metrics:
+            metrics = init_request_metrics("internal")
+            metrics.stage_timings_ms["auth_session"] = 0.1
+        try:
+            return await self._answer_internal(
+                company_id=company_id,
+                user_id=user_id,
+                question=question,
+                history=history,
+                conversation_id=conversation_id,
+                background_tasks=background_tasks,
+            )
+        except Exception:
+            metrics.finish(status="error", cache_status="miss")
+            raise
+
+    async def _answer_internal(
+        self,
+        company_id: str,
+        user_id: str,
+        question: str,
+        history: List[Dict[str, str]],
+        conversation_id: Optional[str] = None,
+        background_tasks: Optional[Any] = None,
+    ) -> Dict[str, Any]:
         start_time = time.time()
-        await self.repo.check_and_increment_rate_limits(company_id, user_id)
+        from app.core.metrics import measure_stage, get_current_metrics
+        metrics = get_current_metrics()
+        with measure_stage("audit"):
+            await self.repo.check_and_increment_rate_limits(company_id, user_id)
 
         # 2. Progressive profiling check
         profile = None
-        if self.profile_service:
-            profile = await self.profile_service.get_or_init_profile(company_id, user_id)
-            from app.modules.profile.sanitizer import matches_phrase
-            if matches_phrase(question, settings.PROFILE_OPT_OUT_PHRASES):
-                await self.profile_service.repo.set_opted_out(company_id, user_id)
-                if conversation_id:
-                    st = await self.profile_service.get_session_state(company_id, user_id, conversation_id)
-                    st.pending_field = None
-                    await self.profile_service.repo.save_session_state(st)
-                latency = int((time.time() - start_time) * 1000)
-                res = self._build_result(
-                    "success", "Understood, I won't ask you again.", "", [], [], False, "none", [], latency, "miss"
-                )
-                res["conversation_id"] = conversation_id
-                res["profile_prompt"] = None
-                msg_doc = create_message_document(
-                    conversation_id, company_id, user_id, question, "success",
-                    res["answer"], res["meta"], resolved_question=question, original_text=question
-                )
-                await self.repo.save_message(msg_doc)
-                return res
-
-            if conversation_id:
-                state = await self.profile_service.get_session_state(company_id, user_id, conversation_id)
-                if state.pending_field:
-                    ack_headline, remaining_q = await self.profile_service.handle_pending_turn(
-                        company_id, user_id, conversation_id, question, profile, state
+        with measure_stage("profile_extract"):
+            if self.profile_service:
+                profile = await self.profile_service.get_or_init_profile(company_id, user_id)
+                from app.modules.profile.sanitizer import matches_phrase
+                if matches_phrase(question, settings.PROFILE_OPT_OUT_PHRASES):
+                    await self.profile_service.repo.set_opted_out(company_id, user_id)
+                    if conversation_id:
+                        st = await self.profile_service.get_session_state(company_id, user_id, conversation_id)
+                        st.pending_field = None
+                        await self.profile_service.repo.save_session_state(st)
+                    latency = int((time.time() - start_time) * 1000)
+                    res = self._build_result(
+                        "success", "Understood, I won't ask you again.", "", [], [], False, "none", [], latency, "miss"
                     )
-                    if ack_headline:
-                        latency = int((time.time() - start_time) * 1000)
-                        res = self._build_result(
-                            "success", ack_headline, "", [], [], False, "none", [], latency, "miss"
+                    res["conversation_id"] = conversation_id
+                    res["profile_prompt"] = None
+                    msg_doc = create_message_document(
+                        conversation_id, company_id, user_id, question, "success",
+                        res["answer"], res["meta"], resolved_question=question, original_text=question
+                    )
+                    await self.repo.save_message(msg_doc)
+                    return self._finalize_result(res)
+
+                if conversation_id:
+                    state = await self.profile_service.get_session_state(company_id, user_id, conversation_id)
+                    if state.pending_field:
+                        ack_headline, remaining_q = await self.profile_service.handle_pending_turn(
+                            company_id, user_id, conversation_id, question, profile, state
                         )
-                        res["conversation_id"] = conversation_id
-                        res["profile_prompt"] = None
-                        msg_doc = create_message_document(
-                            conversation_id, company_id, user_id, question, "success",
-                            res["answer"], res["meta"], resolved_question=question, original_text=question
-                        )
-                        await self.repo.save_message(msg_doc)
-                        return res
-                    if remaining_q:
-                        question = remaining_q
-            if self.profile_service.matches_trigger(question):
-                has_missing = any(f.status == "missing" for f in profile.fields.values())
-                if has_missing:
-                    if background_tasks and hasattr(background_tasks, "add_task"):
-                        background_tasks.add_task(self.profile_service.extract_background, company_id, user_id, question)
-                    else:
-                        import asyncio
-                        asyncio.create_task(self.profile_service.extract_background(company_id, user_id, question))
+                        if ack_headline:
+                            latency = int((time.time() - start_time) * 1000)
+                            res = self._build_result(
+                                "success", ack_headline, "", [], [], False, "none", [], latency, "miss"
+                            )
+                            res["conversation_id"] = conversation_id
+                            res["profile_prompt"] = None
+                            msg_doc = create_message_document(
+                                conversation_id, company_id, user_id, question, "success",
+                                res["answer"], res["meta"], resolved_question=question, original_text=question
+                            )
+                            await self.repo.save_message(msg_doc)
+                            return self._finalize_result(res)
+                        if remaining_q:
+                            question = remaining_q
+                if self.profile_service.matches_trigger(question):
+                    can_extract = any(f.value is None or f.status != "collected" for f in profile.fields.values())
+                    if can_extract:
+                        try:
+                            ext_res, profile, validated = await self.profile_service.extract_and_merge(company_id, user_id, question)
+                            if ext_res and validated:
+                                if ext_res.message_kind == "profile_answer":
+                                    known_name = profile.fields.get("name", {}).value if profile.fields.get("name") else None
+                                    headline = f"Thanks {known_name}, noted." if (known_name and isinstance(known_name, str)) else "Thanks, noted."
+                                    latency = int((time.time() - start_time) * 1000)
+                                    res = self._build_result(
+                                        "success", headline, "", [], [], False, "none", [], latency, "miss"
+                                    )
+                                    res["conversation_id"] = conversation_id
+                                    res["profile_prompt"] = None
+                                    msg_doc = create_message_document(
+                                        conversation_id, company_id, user_id, question, "success",
+                                        res["answer"], res["meta"], resolved_question=question, original_text=question
+                                    )
+                                    await self.repo.save_message(msg_doc)
+                                    return self._finalize_result(res)
+                                elif ext_res.message_kind == "both" and ext_res.remaining_question:
+                                    question = ext_res.remaining_question
+                        except Exception as exc:
+                            logger.warning(f"profile_extraction_error: {type(exc).__name__}")
 
         # 1a. Server-side context: validate conversation ownership and load previous turns
         turns: List[Dict[str, Any]] = []
-        if conversation_id:
-            conv = await self.repo.get_conversation(conversation_id, company_id, user_id)
-            if not conv:
-                raise NotFoundError("Conversation not found")
-            turns = await self.repo.get_conversation_messages(
-                conversation_id=conversation_id,
-                company_id=company_id,
-                user_id=user_id,
-                limit=settings.FOLLOWUP_MAX_TURNS,
-                ttl_hours=settings.CONVERSATION_CONTEXT_TTL_HOURS,
-            )
+        with measure_stage("load_history"):
+            if conversation_id:
+                conv = await self.repo.get_conversation(conversation_id, company_id, user_id)
+                if not conv:
+                    raise NotFoundError("Conversation not found")
+                turns = await self.repo.get_conversation_messages(
+                    conversation_id=conversation_id,
+                    company_id=company_id,
+                    user_id=user_id,
+                    limit=settings.FOLLOWUP_MAX_TURNS,
+                    ttl_hours=settings.CONVERSATION_CONTEXT_TTL_HOURS,
+                )
 
-        catalog = await self.repo.get_schema_catalog(company_id)
+        with measure_stage("load_catalog"):
+            catalog = await self.repo.get_schema_catalog(company_id)
+            if metrics:
+                cat_files = len(catalog.get("files", []))
+                cat_chars = len(json.dumps(catalog, default=str))
+                metrics.set_catalog_stats(cat_files, cat_chars)
         schema_version = catalog.get("schema_version", 1)
         allowed = catalog.get("allowed_collections") or catalog.get("allowed_views")
         file_fields = catalog.get("file_fields") or {}
@@ -319,41 +386,45 @@ class QueryService:
         is_relative = any(w in effective_question.lower() for w in RELATIVE_TIME_WORDS)
         cache_key = build_cache_key(company_id, schema_version, effective_question)
 
-        cached_json = await self.cache.get(cache_key) if not is_relative else None
+        with measure_stage("cache_lookup"):
+            cached_json = await self.cache.get(cache_key) if not is_relative else None
         if cached_json:
             try:
                 cached_data = json.loads(cached_json)
                 target_slug = None
-                if cached_data.get("plan"):
-                    from app.modules.chat.plan_translator import translate_plan_to_query
-                    from app.modules.chat.query_plan import QueryPlan
+                with measure_stage("validate"):
+                    if cached_data.get("plan"):
+                        from app.modules.chat.plan_translator import translate_plan_to_query
+                        from app.modules.chat.query_plan import QueryPlan
 
-                    plan_obj = QueryPlan.model_validate(cached_data["plan"])
-                    target_slug = plan_obj.collection
-                    translated_spec, cols = translate_plan_to_query(plan_obj, catalog)
-                    norm_spec, cols = validate_and_format_sql(
-                        translated_spec,
-                        allowed_set,
-                        catalog_fields=file_fields,
-                        connections=catalog.get("connections", []),
-                        company_id=company_id,
-                    )
-                else:
-                    q_val = cached_data.get("query") or cached_data.get("sql")
-                    norm_spec, cols = validate_and_format_sql(
-                        q_val,
-                        allowed_set,
-                        catalog_fields=file_fields,
-                        connections=catalog.get("connections", []),
-                        company_id=company_id,
-                    )
-                    if isinstance(norm_spec, dict):
-                        target_slug = norm_spec.get("collection")
+                        plan_obj = QueryPlan.model_validate(cached_data["plan"])
+                        target_slug = plan_obj.collection
+                        translated_spec, cols = translate_plan_to_query(plan_obj, catalog)
+                        norm_spec, cols = validate_and_format_sql(
+                            translated_spec,
+                            allowed_set,
+                            catalog_fields=file_fields,
+                            connections=catalog.get("connections", []),
+                            company_id=company_id,
+                        )
+                    else:
+                        q_val = cached_data.get("query") or cached_data.get("sql")
+                        norm_spec, cols = validate_and_format_sql(
+                            q_val,
+                            allowed_set,
+                            catalog_fields=file_fields,
+                            connections=catalog.get("connections", []),
+                            company_id=company_id,
+                        )
+                        if isinstance(norm_spec, dict):
+                            target_slug = norm_spec.get("collection")
 
-                col_defs, rows, trunc = await self.executor.execute_query(norm_spec, company_id, columns=cols)
-                chart = determine_chart_hint(col_defs, rows)
-                headline = fill_template(cached_data.get("headline_template"), col_defs, rows)
-                detail = fill_template(cached_data.get("detail_template"), col_defs, rows)
+                with measure_stage("execute_db"):
+                    col_defs, rows, trunc = await self.executor.execute_query(norm_spec, company_id, columns=cols)
+                with measure_stage("build_response"):
+                    chart = determine_chart_hint(col_defs, rows)
+                    headline = fill_template(cached_data.get("headline_template"), col_defs, rows)
+                    detail = fill_template(cached_data.get("detail_template"), col_defs, rows)
                 latency = int((time.time() - start_time) * 1000)
 
                 cached_files_used = None
@@ -370,29 +441,50 @@ class QueryService:
                     if u_files:
                         cached_files_used = u_files
 
-                if not conversation_id:
-                    conv_doc = create_conversation_document(company_id, user_id, title=question)
-                    conversation_id = await self.repo.save_conversation(conv_doc)
+                with measure_stage("persist"):
+                    if not conversation_id:
+                        conv_doc = create_conversation_document(company_id, user_id, title=question)
+                        conversation_id = await self.repo.save_conversation(conv_doc)
 
-                res = self._build_result(
-                    "success", headline, detail, col_defs, rows, trunc, chart,
-                    cached_data.get("follow_ups", []), latency, "hit", files_used=cached_files_used
-                )
-                if is_rewritten:
-                    res["meta"]["interpreted_question"] = effective_question
-                col_names = [c["name"] for c in col_defs] if col_defs else []
-                msg_doc = create_message_document(
-                    conversation_id, company_id, user_id, question, "success",
-                    res["answer"], res["meta"], resolved_question=effective_question,
-                    file_slug=target_slug, output_columns=col_names, original_text=question
-                )
-                await self.repo.save_message(msg_doc)
+                    res = self._build_result(
+                        "success", headline, detail, col_defs, rows, trunc, chart,
+                        cached_data.get("follow_ups", []), latency, "hit", files_used=cached_files_used
+                    )
+                    if is_rewritten:
+                        res["meta"]["interpreted_question"] = effective_question
+                    col_names = [c["name"] for c in col_defs] if col_defs else []
+                    msg_doc = create_message_document(
+                        conversation_id, company_id, user_id, question, "success",
+                        res["answer"], res["meta"], resolved_question=effective_question,
+                        file_slug=target_slug, output_columns=col_names, original_text=question
+                    )
+                    await self.repo.save_message(msg_doc)
                 res["conversation_id"] = conversation_id
                 return await self._attach_profile_prompt(res, company_id, user_id, conversation_id, profile)
             except Exception:
                 pass
 
-        gen = await self.generator.generate(effective_question, catalog, [], company_id)
+        with measure_stage("generate_llm"):
+            try:
+                gen = await self.generator.generate(effective_question, catalog, [], company_id)
+            except Exception as gen_exc:
+                from app.core.exceptions import LlmUnavailableError
+                if isinstance(gen_exc, LlmUnavailableError):
+                    if settings.TEXT_SEARCH_FALLBACK_ENABLED and self.record_search_repo:
+                        search_res = await self._try_record_search(company_id, user_id, effective_question, conversation_id, start_time)
+                        if search_res:
+                            if is_rewritten:
+                                search_res["meta"]["interpreted_question"] = effective_question
+                            return await self._attach_profile_prompt(search_res, company_id, user_id, conversation_id, profile)
+                    raise gen_exc
+                logger.warning(f"Generator error: {type(gen_exc).__name__}: {gen_exc}")
+                if settings.TEXT_SEARCH_FALLBACK_ENABLED and self.record_search_repo:
+                    search_res = await self._try_record_search(company_id, user_id, effective_question, conversation_id, start_time)
+                    if search_res:
+                        if is_rewritten:
+                            search_res["meta"]["interpreted_question"] = effective_question
+                        return await self._attach_profile_prompt(search_res, company_id, user_id, conversation_id, profile)
+                raise LlmUnavailableError("The AI service is busy. Please try again in a moment.")
         decision = gen.get("decision", "answer")
 
         if decision == "refuse":
@@ -402,6 +494,19 @@ class QueryService:
                     conv_doc = create_conversation_document(company_id, user_id, title=question)
                     conversation_id = await self.repo.save_conversation(conv_doc)
                 no_conn_msg = "These files aren't connected yet. Ask your admin to connect them in Company data."
+                try:
+                    from app.infrastructure.db.mongodb import file_connections_collection
+                    suggested = await file_connections_collection.find_one({"company_id": str(company_id), "status": "suggested"})
+                    if suggested:
+                        files = catalog.get("files", [])
+                        l_f = next((f for f in files if str(f.get("_id") or f.get("id")) == str(suggested.get("left_file_id"))), None)
+                        r_f = next((f for f in files if str(f.get("_id") or f.get("id")) == str(suggested.get("right_file_id"))), None)
+                        if l_f and r_f:
+                            l_name = l_f.get("name") or l_f.get("slug")
+                            r_name = r_f.get("name") or r_f.get("slug")
+                            no_conn_msg = f"A connection between {l_name} and {r_name} is waiting for your admin's approval."
+                except Exception:
+                    pass
                 res = self._build_result(
                     "refused",
                     "These files aren't connected yet.",
@@ -572,20 +677,24 @@ class QueryService:
         rows = []
         trunc = False
         try:
-            norm_spec, cols = validate_and_format_sql(
-                raw_query, allowed_set, catalog_fields=file_fields, connections=active_conns, company_id=company_id
-            )
-            col_defs, rows, trunc = await self.executor.execute_query(norm_spec, company_id, columns=cols)
+            with measure_stage("validate"):
+                norm_spec, cols = validate_and_format_sql(
+                    raw_query, allowed_set, catalog_fields=file_fields, connections=active_conns, company_id=company_id
+                )
+            with measure_stage("execute_db"):
+                col_defs, rows, trunc = await self.executor.execute_query(norm_spec, company_id, columns=cols)
         except Exception:
             try:
                 repaired = await self.generator.generate(
                     f"Fix this MongoDB query for question '{effective_question}': {raw_query}", catalog, [], company_id
                 )
                 repair_target = repaired.get("query") or repaired.get("sql")
-                norm_spec, cols = validate_and_format_sql(
-                    repair_target, allowed_set, catalog_fields=file_fields, connections=active_conns, company_id=company_id
-                )
-                col_defs, rows, trunc = await self.executor.execute_query(norm_spec, company_id, columns=cols)
+                with measure_stage("validate"):
+                    norm_spec, cols = validate_and_format_sql(
+                        repair_target, allowed_set, catalog_fields=file_fields, connections=active_conns, company_id=company_id
+                    )
+                with measure_stage("execute_db"):
+                    col_defs, rows, trunc = await self.executor.execute_query(norm_spec, company_id, columns=cols)
             except Exception:
                 if settings.TEXT_SEARCH_FALLBACK_ENABLED and self.record_search_repo:
                     search_res = await self._try_record_search(company_id, user_id, effective_question, conversation_id, start_time)
@@ -609,19 +718,20 @@ class QueryService:
                 res["conversation_id"] = conversation_id
                 return await self._attach_profile_prompt(res, company_id, user_id, conversation_id, profile)
 
-        chart = determine_chart_hint(col_defs, rows)
-        headline = fill_template(gen.get("headline_template"), col_defs, rows)
-        detail = fill_template(gen.get("detail_template"), col_defs, rows)
-        follow_ups = gen.get("follow_ups", [])
+        with measure_stage("build_response"):
+            chart = determine_chart_hint(col_defs, rows)
+            headline = fill_template(gen.get("headline_template"), col_defs, rows)
+            detail = fill_template(gen.get("detail_template"), col_defs, rows)
+            follow_ups = gen.get("follow_ups", [])
 
-        if self.answer_writer and settings.ANSWER_WRITER_ENABLED:
-            try:
-                written = await self.answer_writer.write_answer(effective_question, col_defs, rows)
-                if written:
-                    headline = written
-                    detail = written
-            except Exception:
-                pass
+            if self.answer_writer and settings.ANSWER_WRITER_ENABLED:
+                try:
+                    written = await self.answer_writer.write_answer(effective_question, col_defs, rows)
+                    if written:
+                        headline = written
+                        detail = written
+                except Exception:
+                    pass
 
         if not is_relative and norm_spec:
             payload = {
@@ -634,7 +744,8 @@ class QueryService:
             }
             await self.cache.set(cache_key, json.dumps(payload), ex=86400)
 
-        await self.repo.increment_monthly_usage(company_id, tokens=150)
+        with measure_stage("audit"):
+            await self.repo.increment_monthly_usage(company_id, tokens=150)
 
         target_slug = norm_spec.get("collection") if isinstance(norm_spec, dict) else (gen.get("plan", {}).get("collection") if isinstance(gen.get("plan"), dict) else None)
         col_names = [c["name"] for c in col_defs] if col_defs else []
@@ -653,22 +764,23 @@ class QueryService:
             if used:
                 files_used_list = used
 
-        if not conversation_id:
-            conv_doc = create_conversation_document(company_id, user_id, title=question)
-            conversation_id = await self.repo.save_conversation(conv_doc)
+        with measure_stage("persist"):
+            if not conversation_id:
+                conv_doc = create_conversation_document(company_id, user_id, title=question)
+                conversation_id = await self.repo.save_conversation(conv_doc)
 
-        latency = int((time.time() - start_time) * 1000)
-        res = self._build_result(
-            "success", headline, detail, col_defs, rows, trunc, chart, follow_ups, latency, "miss", files_used=files_used_list
-        )
-        if is_rewritten:
-            res["meta"]["interpreted_question"] = effective_question
-        msg_doc = create_message_document(
-            conversation_id, company_id, user_id, question, "success",
-            res["answer"], res["meta"], resolved_question=effective_question,
-            file_slug=target_slug, output_columns=col_names, original_text=question
-        )
-        await self.repo.save_message(msg_doc)
+            latency = int((time.time() - start_time) * 1000)
+            res = self._build_result(
+                "success", headline, detail, col_defs, rows, trunc, chart, follow_ups, latency, "miss", files_used=files_used_list
+            )
+            if is_rewritten:
+                res["meta"]["interpreted_question"] = effective_question
+            msg_doc = create_message_document(
+                conversation_id, company_id, user_id, question, "success",
+                res["answer"], res["meta"], resolved_question=effective_question,
+                file_slug=target_slug, output_columns=col_names, original_text=question
+            )
+            await self.repo.save_message(msg_doc)
         res["conversation_id"] = conversation_id
         return await self._attach_profile_prompt(res, company_id, user_id, conversation_id, profile)
 

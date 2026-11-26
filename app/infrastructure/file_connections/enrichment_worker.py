@@ -64,10 +64,11 @@ class EnrichmentWorker:
             right_col_type = right_cols[right_key].get("type", "text")
             left_col_type = left_cols[left_key].get("type", "text")
             hidden_right_keys: Set[str] = {c["key"] for c in right_file.get("columns", []) if c.get("hidden")}
+            norm_level = int(conn.get("normalization_level", 0))
 
             # Stream right values to verify uniqueness
             raw_right_vals = await self.conn_repo.stream_raw_column_values(company_id, right_file_id, right_key)
-            is_unique, _, _ = evaluate_right_key_uniqueness(raw_right_vals, right_col_type)
+            is_unique, _, _ = evaluate_right_key_uniqueness(raw_right_vals, right_col_type, level=norm_level)
             if not is_unique:
                 await self.conn_repo.update_connection(company_id, connection_id, {"status": "needs_attention"})
                 await self.conn_repo.unset_joined_alias(company_id, left_file_id, alias)
@@ -75,7 +76,7 @@ class EnrichmentWorker:
 
             # Stream right rows into normalized map (excluding hidden fields)
             right_map = await self.conn_repo.stream_right_rows_dict(
-                company_id, right_file_id, right_key, right_col_type, hidden_right_keys
+                company_id, right_file_id, right_key, right_col_type, hidden_right_keys, level=norm_level
             )
 
             # Stream left file rows and bulk update in batches of 1,000
@@ -90,7 +91,7 @@ class EnrichmentWorker:
                 for row in batch:
                     total_left += 1
                     raw_val = row.get("data", {}).get(left_key)
-                    norm = normalize_key_value(raw_val, left_col_type)
+                    norm = normalize_key_value(raw_val, left_col_type, level=norm_level)
                     if norm is not None:
                         distinct_left_all.add(norm)
                         if norm in right_map:
