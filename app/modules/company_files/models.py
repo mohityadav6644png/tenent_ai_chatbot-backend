@@ -29,6 +29,7 @@ def create_file_document(
     upload_mode: str,
     columns: List[Dict[str, Any]],
     import_id: str,
+    data_health: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     now = datetime.now(timezone.utc)
     return {
@@ -42,6 +43,7 @@ def create_file_document(
         "row_count": 0,
         "columns": columns,
         "stats": {},
+        "data_health": data_health or {},
         "last_import_id": str(import_id),
         "created_at": now,
         "updated_at": now,

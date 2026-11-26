@@ -94,7 +94,13 @@ class MongoFileConnectionsRepository:
         return values
 
     async def stream_right_rows_dict(
-        self, company_id: str, file_id: str, key: str, key_type: str, hidden_keys: Set[str]
+        self,
+        company_id: str,
+        file_id: str,
+        key: str,
+        key_type: str,
+        hidden_keys: Set[str],
+        level: int = 0,
     ) -> Dict[Any, Dict[str, Any]]:
         cursor = self.rows_reader.find(
             {"company_id": str(company_id), "file_id": str(file_id)},
@@ -104,7 +110,7 @@ class MongoFileConnectionsRepository:
         async for doc in cursor:
             data = doc.get("data", {})
             raw_key = data.get(key)
-            norm = normalize_key_value(raw_key, key_type)
+            norm = normalize_key_value(raw_key, key_type, level=level)
             if norm is None:
                 continue
             # Keep only non-hidden fields, excluding raw MongoDB _id

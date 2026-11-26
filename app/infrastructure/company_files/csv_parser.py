@@ -10,7 +10,10 @@ import io
 import re
 from typing import Any, Dict, List, Optional, Set, Tuple
 
+from app.core.config import settings
 from app.core.exceptions import AppError
+from app.modules.company_files.moderation import is_instruction_like, review_data_health
+from app.modules.company_files.profiling import profile_column
 
 RESERVED_NAMES: Set[str] = {"company_id", "file_id", "import_id", "_id"}
 
@@ -357,6 +360,40 @@ class CompanyFilesCsvParser:
                 row_dict[col_def["key"]] = val if val else None
             sample_rows.append(row_dict)
 
+        # Data Health and Moderation Review
+        health_data = review_data_health(
+            columns=columns_meta,
+            raw_rows=raw_rows,
+            invalid_rows_count=invalid_rows_count,
+            max_flagged_ratio=settings.MODERATION_MAX_FLAGGED_CELL_RATIO,
+        )
+
+        # Profile columns, assign roles, and handle personal data & instruction masks
+        for col_idx, c in enumerate(detected_columns):
+            k = c["key"]
+            if k in health_data.get("personal_columns", []):
+                c["suggested_hidden"] = True
+
+            col_health = health_data.get("flagged_columns", {}).get(k, {})
+            if col_health.get("exclude_from_catalog"):
+                c["example"] = None
+            elif c.get("example") and is_instruction_like(str(c["example"])):
+                vals = columns_meta[col_idx]["values"]
+                c["example"] = next((v for v in vals if v and not is_instruction_like(v)), None)
+
+            prof, role, role_conf = profile_column(
+                key=k,
+                label=c["label"],
+                inferred_type=c["type"],
+                values=columns_meta[col_idx]["values"],
+                is_personal=c["suggested_hidden"],
+                category_max_distinct=settings.PROFILE_CATEGORY_MAX_DISTINCT,
+            )
+            c["role"] = role
+            c["role_confidence"] = role_conf
+            c["profile"] = prof
+            c["linked_to"] = []
+
         return {
             "filename": filename,
             "total_rows": row_count,
@@ -371,6 +408,8 @@ class CompanyFilesCsvParser:
                 "max_rows": max_rows,
                 "max_columns": max_columns,
             },
+            "data_health": health_data,
+            "_raw_rows": raw_rows,
         }
 
     def parse_for_ingestion(

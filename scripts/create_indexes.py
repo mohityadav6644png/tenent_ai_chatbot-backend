@@ -118,6 +118,15 @@ async def create_business_indexes():
     )
     await app_db["file_connections"].create_index([("company_id", ASCENDING), ("updated_at", DESCENDING)])
     await app_db["file_connections"].create_index([("company_id", ASCENDING), ("status", ASCENDING)])
+    await app_db["file_connections"].create_index(
+        [("company_id", ASCENDING), ("signature", ASCENDING)],
+        unique=True,
+        partialFilterExpression={"signature": {"$type": "string"}},
+    )
+
+    # File scan state indexes
+    await app_db["file_scan_state"].create_index([("company_id", ASCENDING)], unique=True)
+    await app_db["file_scan_state"].create_index("updated_at", expireAfterSeconds=2592000)
 
     print("Compound business and data import indexes created successfully.")
     await business_writer_client.close()

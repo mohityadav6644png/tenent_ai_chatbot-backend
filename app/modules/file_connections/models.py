@@ -6,6 +6,7 @@ Pure Python - strictly no motor, pymongo, fastapi, or csv imports.
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+import hashlib
 import re
 from typing import Any, Dict, List, Literal, Optional
 
@@ -13,6 +14,16 @@ SLUG_REGEX = re.compile(r"^[a-z][a-z0-9_]{1,40}$")
 
 ConnectionStatus = Literal["suggested", "refreshing", "active", "needs_attention", "dismissed"]
 Cardinality = Literal["many_to_one", "one_to_one"]
+ConnectionOrigin = Literal["manual", "auto"]
+ConfidenceLabel = Literal["high", "medium"]
+
+
+def compute_connection_signature(
+    left_file_id: str, left_key: str, right_file_id: str, right_key: str
+) -> str:
+    """Deterministic hash of connection endpoints to prevent duplicates."""
+    raw = f"{str(left_file_id).strip()}:{str(left_key).strip().lower()}->{str(right_file_id).strip()}:{str(right_key).strip().lower()}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
 def is_valid_slug(slug: str) -> bool:
@@ -36,6 +47,13 @@ class FileConnection:
     matched_rows: int = 0
     left_rows: int = 0
     right_rows: int = 0
+    origin: ConnectionOrigin = "manual"
+    confidence: Optional[float] = None
+    confidence_label: Optional[ConfidenceLabel] = None
+    review_needed: bool = False
+    normalization_level: int = 0
+    evidence: Optional[Dict[str, Any]] = None
+    signature: Optional[str] = None
     created_by: Optional[str] = None
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
@@ -55,9 +73,17 @@ def create_connection_document(
     matched_rows: int = 0,
     left_rows: int = 0,
     right_rows: int = 0,
+    origin: ConnectionOrigin = "manual",
+    confidence: Optional[float] = None,
+    confidence_label: Optional[ConfidenceLabel] = None,
+    review_needed: bool = False,
+    normalization_level: int = 0,
+    evidence: Optional[Dict[str, Any]] = None,
+    signature: Optional[str] = None,
     created_by: Optional[str] = None,
 ) -> Dict[str, Any]:
     now = datetime.now(timezone.utc)
+    sig = signature or compute_connection_signature(left_file_id, left_key, right_file_id, right_key)
     return {
         "company_id": str(company_id),
         "name": name.strip(),
@@ -72,6 +98,13 @@ def create_connection_document(
         "matched_rows": int(matched_rows),
         "left_rows": int(left_rows),
         "right_rows": int(right_rows),
+        "origin": origin,
+        "confidence": round(float(confidence), 4) if confidence is not None else None,
+        "confidence_label": confidence_label,
+        "review_needed": bool(review_needed),
+        "normalization_level": int(normalization_level),
+        "evidence": evidence or {},
+        "signature": sig,
         "created_by": str(created_by) if created_by else None,
         "created_at": now,
         "updated_at": now,

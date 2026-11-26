@@ -260,7 +260,7 @@ class FakeSQLGenerator:
                     }
 
             # Zenith Sales: "Show won deal value by manager or region"
-            if "won deal value" in q or ("manager" in q and ("deal" in q or "won" in q)) or ("region" in q and ("deal" in q or "sales" in q)):
+            if "won deal value" in q or ("manager" in q and ("deal" in q or "won" in q)) or ("region" in q and ("deal" in q or "won" in q)):
                 deals_f = next((f for f in files if "deal" in f.get("slug", "")), None)
                 sales_conn = next((c for c in conns if "sales" in c.get("alias", "") or "team" in c.get("alias", "")), None)
                 if deals_f and sales_conn:
@@ -306,6 +306,18 @@ class FakeSQLGenerator:
                     "detail_template": "These files aren't connected yet. Ask your admin to connect them in Company data.",
                     "follow_ups": [],
                 }
+
+            # CityCare Clinic: unconnected negative query (medicine + appointment)
+            if ("medicine" in q or "stock" in q) and ("appointment" in q or "doctor" in q or "prescribed" in q):
+                has_med_conn = any("medicine" in (c.get("alias") or "") for c in conns)
+                if not has_med_conn:
+                    return {
+                        "decision": "refuse",
+                        "refusal_reason": "no_connection",
+                        "headline_template": "These files aren't connected yet.",
+                        "detail_template": "These files aren't connected yet. Ask your admin to connect them in Company data.",
+                        "follow_ups": [],
+                    }
 
             # Check for hidden column requests (e.g., phone numbers when phone is hidden)
             non_hidden_keys = {c.get("key") for f in files for c in f.get("columns", [])}

@@ -51,6 +51,11 @@ def _resolve_field(name: Optional[str], known_fields: Set[str]) -> str:
         if f.lower() == clean.lower():
             return f
 
+    # Check joined fields with alias prefix: e.g. 'fee_status' -> '<alias>.fee_status'
+    for f in known_fields:
+        if f.lower().endswith(f".{clean.lower()}"):
+            return f
+
     # Suffix/prefix variants: e.g. 'experience' -> 'experience_years', 'fee' -> 'fee', 'price' -> 'price_per_unit'
     candidates = [
         f for f in known_fields

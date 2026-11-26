@@ -9,6 +9,7 @@ import json
 from typing import Any, Dict
 from app.core.config import settings
 from app.infrastructure.db.mongodb import tenants_collection
+from app.modules.company_files.moderation import is_instruction_like
 
 MONGO_BUSINESS_CATALOG = {
     "allowed_collections": ["orders", "customers", "products", "invoices", "stock_levels"],
@@ -112,25 +113,36 @@ class SchemaCatalogRepo:
             rf_by_id = {}
             for f in raw_files:
                 f_stats = f.get("stats", {}).get("columns", {})
+                f_health = f.get("data_health", {})
+                flagged_cols = f_health.get("flagged_columns", {})
                 cols = []
                 for c in f.get("columns", []):
                     if c.get("hidden"):
                         continue
                     k = c["key"]
+                    col_health = flagged_cols.get(k, {})
+                    exclude_catalog = bool(col_health.get("exclude_from_catalog"))
+                    ex = c.get("example") if not exclude_catalog else None
+                    if ex and is_instruction_like(str(ex)):
+                        ex = None
+
                     col_info = {
                         "key": k,
                         "label": c.get("label", k),
                         "type": c.get("type", "text"),
                         "meaning": c.get("meaning"),
-                        "example": c.get("example"),
+                        "example": ex,
+                        "role": c.get("role"),
                     }
-                    if k in f_stats:
+                    if not exclude_catalog and k in f_stats:
                         st = f_stats[k]
                         if "min" in st:
                             col_info["min"] = st.get("min")
                             col_info["max"] = st.get("max")
                         if "distinct_values" in st and st.get("distinct_values") is not None:
-                            col_info["distinct_values"] = st.get("distinct_values")
+                            col_info["distinct_values"] = [
+                                dv for dv in st.get("distinct_values") if not is_instruction_like(str(dv))
+                            ]
                     cols.append(col_info)
 
                 rf_entry = {
@@ -176,6 +188,7 @@ class SchemaCatalogRepo:
                         "description": desc,
                         "left_key": conn.get("left_key"),
                         "right_key": conn.get("right_key"),
+                        "confidence_label": conn.get("confidence_label", "high"),
                     })
                     r_stats = right_raw.get("stats", {}).get("columns", {})
                     for rc in right_raw.get("columns", []):
@@ -188,6 +201,7 @@ class SchemaCatalogRepo:
                             "type": rc.get("type", "text"),
                             "meaning": rc.get("meaning"),
                             "example": rc.get("example"),
+                            "role": rc.get("role"),
                         }
                         if rk in r_stats:
                             rst = r_stats[rk]

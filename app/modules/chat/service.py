@@ -131,13 +131,30 @@ class QueryService:
                     if remaining_q:
                         question = remaining_q
             if self.profile_service.matches_trigger(question):
-                has_missing = any(f.status == "missing" for f in profile.fields.values())
-                if has_missing:
-                    if background_tasks and hasattr(background_tasks, "add_task"):
-                        background_tasks.add_task(self.profile_service.extract_background, company_id, user_id, question)
-                    else:
-                        import asyncio
-                        asyncio.create_task(self.profile_service.extract_background(company_id, user_id, question))
+                can_extract = any(f.value is None or f.status != "collected" for f in profile.fields.values())
+                if can_extract:
+                    try:
+                        ext_res, profile, validated = await self.profile_service.extract_and_merge(company_id, user_id, question)
+                        if ext_res and validated:
+                            if ext_res.message_kind == "profile_answer":
+                                known_name = profile.fields.get("name", {}).value if profile.fields.get("name") else None
+                                headline = f"Thanks {known_name}, noted." if (known_name and isinstance(known_name, str)) else "Thanks, noted."
+                                latency = int((time.time() - start_time) * 1000)
+                                res = self._build_result(
+                                    "success", headline, "", [], [], False, "none", [], latency, "miss"
+                                )
+                                res["conversation_id"] = conversation_id
+                                res["profile_prompt"] = None
+                                msg_doc = create_message_document(
+                                    conversation_id, company_id, user_id, question, "success",
+                                    res["answer"], res["meta"], resolved_question=question, original_text=question
+                                )
+                                await self.repo.save_message(msg_doc)
+                                return res
+                            elif ext_res.message_kind == "both" and ext_res.remaining_question:
+                                question = ext_res.remaining_question
+                    except Exception as exc:
+                        logger.warning(f"profile_extraction_error: {type(exc).__name__}")
 
         # 1a. Server-side context: validate conversation ownership and load previous turns
         turns: List[Dict[str, Any]] = []
@@ -392,7 +409,26 @@ class QueryService:
             except Exception:
                 pass
 
-        gen = await self.generator.generate(effective_question, catalog, [], company_id)
+        try:
+            gen = await self.generator.generate(effective_question, catalog, [], company_id)
+        except Exception as gen_exc:
+            from app.core.exceptions import LlmUnavailableError
+            if isinstance(gen_exc, LlmUnavailableError):
+                if settings.TEXT_SEARCH_FALLBACK_ENABLED and self.record_search_repo:
+                    search_res = await self._try_record_search(company_id, user_id, effective_question, conversation_id, start_time)
+                    if search_res:
+                        if is_rewritten:
+                            search_res["meta"]["interpreted_question"] = effective_question
+                        return await self._attach_profile_prompt(search_res, company_id, user_id, conversation_id, profile)
+                raise gen_exc
+            logger.warning(f"Generator error: {type(gen_exc).__name__}: {gen_exc}")
+            if settings.TEXT_SEARCH_FALLBACK_ENABLED and self.record_search_repo:
+                search_res = await self._try_record_search(company_id, user_id, effective_question, conversation_id, start_time)
+                if search_res:
+                    if is_rewritten:
+                        search_res["meta"]["interpreted_question"] = effective_question
+                    return await self._attach_profile_prompt(search_res, company_id, user_id, conversation_id, profile)
+            raise LlmUnavailableError("The AI service is busy. Please try again in a moment.")
         decision = gen.get("decision", "answer")
 
         if decision == "refuse":
@@ -402,6 +438,19 @@ class QueryService:
                     conv_doc = create_conversation_document(company_id, user_id, title=question)
                     conversation_id = await self.repo.save_conversation(conv_doc)
                 no_conn_msg = "These files aren't connected yet. Ask your admin to connect them in Company data."
+                try:
+                    from app.infrastructure.db.mongodb import file_connections_collection
+                    suggested = await file_connections_collection.find_one({"company_id": str(company_id), "status": "suggested"})
+                    if suggested:
+                        files = catalog.get("files", [])
+                        l_f = next((f for f in files if str(f.get("_id") or f.get("id")) == str(suggested.get("left_file_id"))), None)
+                        r_f = next((f for f in files if str(f.get("_id") or f.get("id")) == str(suggested.get("right_file_id"))), None)
+                        if l_f and r_f:
+                            l_name = l_f.get("name") or l_f.get("slug")
+                            r_name = r_f.get("name") or r_f.get("slug")
+                            no_conn_msg = f"A connection between {l_name} and {r_name} is waiting for your admin's approval."
+                except Exception:
+                    pass
                 res = self._build_result(
                     "refused",
                     "These files aren't connected yet.",

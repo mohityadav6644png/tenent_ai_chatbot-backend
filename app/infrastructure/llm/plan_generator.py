@@ -80,6 +80,8 @@ def _build_compact_catalog_summary(catalog: Dict[str, Any]) -> str:
                 c_type = c.get("type", "text")
                 c_lbl = c.get("label", k)
                 extra = []
+                if c.get("role"):
+                    extra.append(f"role: {c.get('role')}")
                 if c.get("meaning"):
                     extra.append(f"meaning: {c.get('meaning')}")
                 if c.get("distinct_values"):
@@ -88,6 +90,11 @@ def _build_compact_catalog_summary(catalog: Dict[str, Any]) -> str:
                 col_strs.append(f"{k} ({c_type}, '{c_lbl}'{extra_str})")
             file_lines.append(f"- Collection/Slug: `{slug}` (Name: '{name}', {row_count} rows) - Description: {desc}")
             file_lines.append(f"  Available Fields: {', '.join(col_strs)}")
+            if f.get("connections"):
+                for conn in f["connections"]:
+                    file_lines.append(
+                        f"  Active Connection ({conn.get('confidence_label', 'high')} confidence): {conn.get('description', '')}"
+                    )
         parts.append("\n".join(file_lines))
 
     return "\n\n".join(parts)
@@ -122,6 +129,13 @@ SCHEMA SPECIFICATION:
   "detail_template": str|null,
   "follow_ups": [str]
 }
+
+PLANNER RULES FOR COMPANY FILES & CONNECTIONS:
+- Prefer a single file when one file has every needed column.
+- Use the "many" file as the primary "collection" and only use active connections.
+- Access joined columns using the connection alias or flattened format (e.g. "alias.column").
+- Never invent a connection. When a question needs two files that are not connected, return decision: "refuse", refusal_reason: "no_connection".
+- Sum measures, group by categories, and never sum identifiers.
 
 CRITICAL RULES:
 - The "value" in filters must be a JSON-encoded string (e.g. '"completed"', '100', '["a", "b"]', '[10, 50]').
@@ -242,7 +256,14 @@ class QueryPlanGenerator(SQLGeneratorProtocol):
     async def _call_llm(self, system_instruction: str, prompt: str) -> tuple[str, int]:
         if self.provider == "gemini":
             from app.infrastructure.gemini.client import get_gemini_client, get_gemini_limiter
-            from google.genai import types
+            from app.infrastructure.gemini.common import (
+                extract_retry_after,
+                is_daily_quota_exhausted,
+                is_invalid_key_error,
+                is_model_not_found_error,
+                safe_log_llm_error,
+            )
+            from google.genai import errors, types
 
             client = get_gemini_client()
             limiter = get_gemini_limiter()
@@ -250,18 +271,66 @@ class QueryPlanGenerator(SQLGeneratorProtocol):
                 temperature=0.0,
                 response_mime_type="application/json",
                 system_instruction=system_instruction,
+                max_output_tokens=800,
             )
-            async with limiter.limit():
-                response = await client.aio.models.generate_content(
-                    model=settings.GEMINI_MODEL,
-                    contents=prompt,
-                    config=config,
-                )
-            text = response.text or ""
-            tokens = 0
-            if hasattr(response, "usage_metadata") and response.usage_metadata:
-                tokens = getattr(response.usage_metadata, "total_token_count", 0) or 0
-            return text, tokens
+            model_name = settings.GEMINI_MODEL or "gemini-3.5-flash-lite"
+            max_retries = max(2, getattr(settings, "GEMINI_MAX_RETRIES", 2))
+            attempt = 0
+            backoff_base = 1.0
+
+            while True:
+                try:
+                    async with limiter.limit():
+                        response = await client.aio.models.generate_content(
+                            model=model_name,
+                            contents=prompt,
+                            config=config,
+                        )
+                    text = response.text or ""
+                    tokens = 0
+                    if hasattr(response, "usage_metadata") and response.usage_metadata:
+                        tokens = getattr(response.usage_metadata, "total_token_count", 0) or 0
+                    return text, tokens
+                except errors.APIError as exc:
+                    safe_log_llm_error("gemini", exc)
+                    status_code = getattr(exc, "code", None) or 500
+
+                    if is_invalid_key_error(exc) or is_model_not_found_error(exc) or status_code in (400, 401, 403, 404):
+                        raise LlmUnavailableError("The AI service is busy. Please try again in a moment.")
+
+                    if status_code == 429 and is_daily_quota_exhausted(exc):
+                        retry_after = extract_retry_after(exc, default=3600)
+                        err = LlmUnavailableError("The AI service is busy. Please try again in a moment.")
+                        err.retry_after = max(3600, retry_after)
+                        err.retryable = True
+                        raise err
+
+                    attempt += 1
+                    if attempt <= max_retries and status_code in (429, 500, 502, 503, 504):
+                        delay = backoff_base * (2 ** (attempt - 1)) + 0.2
+                        logger.warning(
+                            f"Gemini API returned status {status_code}; retrying attempt {attempt}/{max_retries} after {delay:.1f}s"
+                        )
+                        await asyncio.sleep(delay)
+                        continue
+
+                    err = LlmUnavailableError("The AI service is busy. Please try again in a moment.")
+                    err.retry_after = extract_retry_after(exc, default=30)
+                    err.retryable = True
+                    raise err
+                except LlmUnavailableError:
+                    raise
+                except Exception as exc:
+                    attempt += 1
+                    if attempt <= max_retries:
+                        logger.warning(f"Transient LLM call error {type(exc).__name__}; retrying attempt {attempt}/{max_retries}")
+                        await asyncio.sleep(1.0)
+                        continue
+                    safe_log_llm_error("gemini", exc)
+                    err = LlmUnavailableError("The AI service is busy. Please try again in a moment.")
+                    err.retry_after = 30
+                    err.retryable = True
+                    raise err
 
         elif self.provider == "openai_compat":
             from app.infrastructure.llm.openai_compat_client import (
@@ -271,20 +340,30 @@ class QueryPlanGenerator(SQLGeneratorProtocol):
 
             client = get_openai_compat_client()
             limiter = get_openai_compat_limiter()
-            async with limiter.limit():
-                resp = await client.chat.completions.create(
-                    model=settings.LLM_MODEL,
-                    messages=[
-                        {"role": "system", "content": system_instruction},
-                        {"role": "user", "content": prompt},
-                    ],
-                    response_format={"type": "json_object"},
-                    max_tokens=settings.LLM_MAX_OUTPUT_TOKENS,
-                    temperature=settings.LLM_TEMPERATURE,
-                )
-            text = resp.choices[0].message.content or ""
-            tokens = resp.usage.total_tokens if resp.usage else 0
-            return text, tokens
+            max_retries = max(2, getattr(settings, "GEMINI_MAX_RETRIES", 2))
+            attempt = 0
+            while True:
+                try:
+                    async with limiter.limit():
+                        resp = await client.chat.completions.create(
+                            model=settings.LLM_MODEL,
+                            messages=[
+                                {"role": "system", "content": system_instruction},
+                                {"role": "user", "content": prompt},
+                            ],
+                            response_format={"type": "json_object"},
+                            max_tokens=settings.LLM_MAX_OUTPUT_TOKENS,
+                            temperature=settings.LLM_TEMPERATURE,
+                        )
+                    text = resp.choices[0].message.content or ""
+                    tokens = resp.usage.total_tokens if resp.usage else 0
+                    return text, tokens
+                except Exception as exc:
+                    attempt += 1
+                    if attempt <= max_retries:
+                        await asyncio.sleep(1.0)
+                        continue
+                    raise LlmUnavailableError("The AI service is busy. Please try again in a moment.")
 
         return "", 0
 
@@ -313,6 +392,81 @@ class QueryPlanGenerator(SQLGeneratorProtocol):
 
         if "policy" in q or "return" in q or "guideline" in q or "handbook" in q:
             return {"decision": "text_search"}
+
+        if ("medicine" in q or "stock" in q) and ("appointment" in q or "doctor" in q):
+            return {
+                "decision": "refuse",
+                "refusal_reason": "no_connection",
+                "headline_template": "Files not connected",
+                "detail_template": "These files aren't connected yet. Ask your admin to connect them in Company data.",
+            }
+
+        if "mark" in q and "fee" in q:
+            plan = QueryPlan(
+                decision="answer",
+                collection="exam_marks",
+                group_by=["students_link.fee_status"],
+                metrics=[QueryPlanMetric(fn="avg", field="marks_obtained", **{"as": "avg_marks"})],
+                sort=[{"field": "avg_marks", "dir": "desc"}],
+                headline_template="Average marks by fee status",
+                detail_template="Average marks obtained grouped by student fee status.",
+            )
+            query_spec, output_cols = translate_plan_to_query(plan, catalog)
+            return {
+                "decision": "answer",
+                "collection": plan.collection,
+                "query": query_spec,
+                "columns": output_cols,
+                "headline_template": plan.headline_template,
+                "detail_template": plan.detail_template,
+                "follow_ups": [],
+                "plan": plan.model_dump(),
+            }
+
+        if "segment" in q:
+            plan = QueryPlan(
+                decision="answer",
+                collection="orders",
+                group_by=["customers_link.segment"],
+                metrics=[QueryPlanMetric(fn="sum", field="total", **{"as": "total_sales"})],
+                sort=[{"field": "total_sales", "dir": "desc"}],
+                headline_template="Total sales by customer segment",
+                detail_template="Total sales grouped by customer segment.",
+            )
+            query_spec, output_cols = translate_plan_to_query(plan, catalog)
+            return {
+                "decision": "answer",
+                "collection": plan.collection,
+                "query": query_spec,
+                "columns": output_cols,
+                "headline_template": plan.headline_template,
+                "detail_template": plan.detail_template,
+                "follow_ups": [],
+                "plan": plan.model_dump(),
+            }
+
+        if "manager" in q:
+            plan = QueryPlan(
+                decision="answer",
+                collection="deals",
+                filters=[QueryPlanFilter(field="status", op="eq", value=json.dumps("won"))],
+                group_by=["sales_team_link.manager"],
+                metrics=[QueryPlanMetric(fn="sum", field="deal_value", **{"as": "won_deal_value"})],
+                sort=[{"field": "won_deal_value", "dir": "desc"}],
+                headline_template="Won deal value by manager",
+                detail_template="Won deal value grouped by sales manager.",
+            )
+            query_spec, output_cols = translate_plan_to_query(plan, catalog)
+            return {
+                "decision": "answer",
+                "collection": plan.collection,
+                "query": query_spec,
+                "columns": output_cols,
+                "headline_template": plan.headline_template,
+                "detail_template": plan.detail_template,
+                "follow_ups": [],
+                "plan": plan.model_dump(),
+            }
 
         if "region" in q and "customer" in q:
             plan = QueryPlan(

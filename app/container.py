@@ -223,6 +223,10 @@ class Container:
         from app.infrastructure.file_connections.enrichment_worker import EnrichmentWorker
         from app.modules.file_connections.service import FileConnectionsService
 
+        from app.infrastructure.file_connections.llm_reviewer import ConnectionLLMReviewer
+        from app.infrastructure.file_connections.detection_worker import ConnectionDetectionWorker
+        from app.infrastructure.db.mongodb import app_database
+
         self.file_connections_repo = MongoFileConnectionsRepository()
         self.enrichment_worker = EnrichmentWorker(
             conn_repo=self.file_connections_repo,
@@ -231,11 +235,20 @@ class Container:
             cache=self.cache,
             audit=self.audit_service,
         )
+        self.connection_llm_reviewer = ConnectionLLMReviewer()
+        self.detection_worker = ConnectionDetectionWorker(
+            conn_repo=self.file_connections_repo,
+            files_repo=self.company_files_repo,
+            enrichment_worker=self.enrichment_worker,
+            llm_reviewer=self.connection_llm_reviewer,
+            app_db=app_database,
+        )
         self.file_connections_service = FileConnectionsService(
             conn_repo=self.file_connections_repo,
             files_repo=self.company_files_repo,
             enrichment_worker=self.enrichment_worker,
         )
+        self.file_connections_service.detection_worker = self.detection_worker
 
         self.company_files_service = CompanyFilesService(
             repo=self.company_files_repo,
@@ -246,6 +259,7 @@ class Container:
             file_connections_service=self.file_connections_service,
             enrichment_worker=self.enrichment_worker,
         )
+        self.company_files_service.detection_worker = self.detection_worker
 
 
 container = Container()
@@ -309,5 +323,9 @@ def get_file_connections_repo():
 
 def get_enrichment_worker():
     return container.enrichment_worker
+
+
+def get_connection_detection_worker():
+    return container.detection_worker
 
 

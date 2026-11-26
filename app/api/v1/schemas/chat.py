@@ -41,6 +41,9 @@ class ChatMetaPayload(BaseModel):
     source: Optional[str] = None
     interpreted_question: Optional[str] = None
     files_used: Optional[List[str]] = None
+    timings_ms: Optional[Dict[str, float]] = None
+    tokens: Optional[Dict[str, Any]] = None
+    catalog_chars: Optional[int] = None
 
 
 class ChatErrorPayload(BaseModel):

@@ -77,7 +77,7 @@ class CompanyFilesService:
 
     async def preview(self, company_id: str, content_bytes: bytes, filename: str) -> Dict[str, Any]:
         """Preview CSV: type inference, column sanitization, sample rows, errors. Writes nothing."""
-        return self.parser.parse_preview(
+        res = self.parser.parse_preview(
             content_bytes=content_bytes,
             filename=filename,
             max_files=settings.FILES_MAX_PER_COMPANY,
@@ -87,6 +87,24 @@ class CompanyFilesService:
             max_cell_chars=settings.IMPORT_MAX_CELL_CHARS,
             max_preview_errors=settings.IMPORT_PREVIEW_ERRORS,
         )
+        raw_rows = res.pop("_raw_rows", [])
+        detected_connections = []
+        try:
+            from app.infrastructure.file_connections.preview_detector import detect_connections_for_preview
+            conn_repo = getattr(self.file_connections_service, "conn_repo", None)
+            if conn_repo:
+                detected_connections = await detect_connections_for_preview(
+                    company_id=company_id,
+                    preview_file_name=filename,
+                    preview_columns=res.get("columns", []),
+                    raw_rows=raw_rows,
+                    files_repo=self.repo,
+                    conn_repo=conn_repo,
+                )
+        except Exception:
+            pass
+        res["detected_connections"] = detected_connections
+        return res
 
     async def create_file(
         self,
@@ -179,6 +197,10 @@ class CompanyFilesService:
                 "example": col.get("example"),
                 "meaning": meaning if meaning else None,
                 "hidden": hidden,
+                "role": col.get("role"),
+                "role_confidence": col.get("role_confidence"),
+                "profile": col.get("profile"),
+                "linked_to": col.get("linked_to", []),
             })
 
         import_id = uuid.uuid4().hex
@@ -193,6 +215,7 @@ class CompanyFilesService:
             upload_mode=upload_mode,
             columns=final_columns,
             import_id=import_id,
+            data_health=preview_data.get("data_health", {}),
         )
         file_id = await self.repo.create_file_record(file_doc)
 
@@ -296,6 +319,7 @@ class CompanyFilesService:
                 "updated_at": f.get("updated_at", datetime.now(timezone.utc)),
                 "status": f.get("status", "ready"),
                 "upload_mode": f.get("upload_mode", "replace"),
+                "columns": f.get("columns", []),
             })
 
         return {

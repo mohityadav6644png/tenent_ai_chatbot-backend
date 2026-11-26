@@ -148,6 +148,7 @@ class FileConnectionsService:
         for d in docs:
             lid = d.get("left_file_id", "")
             rid = d.get("right_file_id", "")
+            ev = d.get("evidence", {}) or {}
             res.append({
                 "id": str(d["_id"]),
                 "name": d.get("name", ""),
@@ -157,8 +158,22 @@ class FileConnectionsService:
                 "status": d.get("status", "suggested"),
                 "match_rate": d.get("match_rate", 0.0),
                 "updated_at": d.get("updated_at"),
+                "origin": d.get("origin", "manual"),
+                "confidence": d.get("confidence"),
+                "confidence_label": d.get("confidence_label"),
+                "review_needed": bool(d.get("review_needed", False)),
+                "normalization_level": int(d.get("normalization_level", 0)),
+                "evidence": ev,
+                "reason_codes": ev.get("reason_codes", []),
             })
         return {"connections": res}
+
+    async def mark_reviewed(self, company_id: str, user_id: str, conn_id: str) -> Dict[str, Any]:
+        conn = await self.conn_repo.get_connection_by_id(company_id, conn_id)
+        if not conn:
+            raise NotFoundError("Connection not found.")
+        await self.conn_repo.update_connection(company_id, conn_id, {"review_needed": False})
+        return {"id": conn_id, "status": conn.get("status", "active")}
 
     async def accept_suggestion(self, company_id: str, user_id: str, conn_id: str) -> Dict[str, Any]:
         conn = await self.conn_repo.get_connection_by_id(company_id, conn_id)
@@ -193,6 +208,11 @@ class FileConnectionsService:
         asyncio.create_task(self.conn_repo.unset_joined_alias(company_id, left_file_id, alias))
 
     async def generate_suggestions(self, company_id: str) -> None:
+        worker = getattr(self, "detection_worker", None)
+        if worker and hasattr(worker, "scan_company_connections"):
+            await worker.scan_company_connections(company_id, trigger="auto")
+            return
+
         files = await self.files_repo.list_files(company_id)
         ready_files = [f for f in files if f.get("status") == "ready"]
         if len(ready_files) < 2:
