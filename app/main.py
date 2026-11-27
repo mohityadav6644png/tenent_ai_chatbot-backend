@@ -77,6 +77,7 @@ def create_app() -> FastAPI:
     origins = [
     "http://localhost:5173",
     "http://localhost:3000",
+    "https://tenent-ai-chatbot-frontend-eta.vercel.app/",
     # Add your live React URL here once created, e.g.:
     # "https://my-react-ui.azurewebsites.net",
         ]

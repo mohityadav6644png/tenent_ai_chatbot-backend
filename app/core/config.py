@@ -6,7 +6,7 @@ Loads configuration settings from environment variables and .env file.
 from functools import lru_cache
 from pathlib import Path
 from typing import List, Optional
-from pydantic import SecretStr
+from pydantic import SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
@@ -26,6 +26,20 @@ class Settings(BaseSettings):
         "http://localhost:5173",
         "http://127.0.0.1:5173",
     ]
+
+    @field_validator("ALLOWED_ORIGINS", mode="before")
+    @classmethod
+    def parse_allowed_origins(cls, v):
+        if isinstance(v, str):
+            v = v.strip()
+            if v.startswith("[") and v.endswith("]"):
+                import json
+                try:
+                    return json.loads(v)
+                except Exception:
+                    pass
+            return [origin.strip() for origin in v.split(",") if origin.strip()]
+        return v
     COOKIE_SECURE: bool = False
     SESSION_TTL_MINUTES: int = 480
     CSRF_COOKIE_NAME: str = "csrf_token"

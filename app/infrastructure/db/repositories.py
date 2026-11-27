@@ -31,18 +31,24 @@ class MongoAuthRepository:
         return await users_collection.find_one({"email": email.strip().lower()})
 
     async def get_user_by_id(self, user_id: str) -> Optional[Dict[str, Any]]:
-        oid = ObjectId(user_id) if ObjectId.is_valid(user_id) else user_id
-        return await users_collection.find_one({"_id": oid})
+        candidates = [str(user_id)]
+        if ObjectId.is_valid(user_id):
+            candidates.append(ObjectId(user_id))
+        return await users_collection.find_one({"_id": {"$in": candidates}})
 
     async def update_user(self, user_id: str, updates: Dict[str, Any]) -> None:
         updates["updated_at"] = datetime.now(timezone.utc)
-        oid = ObjectId(user_id) if ObjectId.is_valid(user_id) else user_id
-        await users_collection.update_one({"_id": oid}, {"$set": updates})
+        candidates = [str(user_id)]
+        if ObjectId.is_valid(user_id):
+            candidates.append(ObjectId(user_id))
+        await users_collection.update_one({"_id": {"$in": candidates}}, {"$set": updates})
 
     async def update_user_scoped(self, user_id: str, company_id: str, updates: Dict[str, Any]) -> None:
         updates["updated_at"] = datetime.now(timezone.utc)
-        oid = ObjectId(user_id) if ObjectId.is_valid(user_id) else user_id
-        await users_collection.update_one({"_id": oid, "company_id": str(company_id)}, {"$set": updates})
+        candidates = [str(user_id)]
+        if ObjectId.is_valid(user_id):
+            candidates.append(ObjectId(user_id))
+        await users_collection.update_one({"_id": {"$in": candidates}, "company_id": str(company_id)}, {"$set": updates})
 
     async def create_session(self, doc: Dict[str, Any]) -> None:
         await sessions_collection.insert_one(doc)
@@ -57,13 +63,17 @@ class MongoAuthRepository:
         await sessions_collection.delete_many({"user_id": str(user_id)})
 
     async def get_tenant_by_id(self, tenant_id: str) -> Optional[Dict[str, Any]]:
-        oid = ObjectId(tenant_id) if ObjectId.is_valid(tenant_id) else tenant_id
-        return await tenants_collection.find_one({"_id": oid})
+        candidates = [str(tenant_id)]
+        if ObjectId.is_valid(tenant_id):
+            candidates.append(ObjectId(tenant_id))
+        return await tenants_collection.find_one({"_id": {"$in": candidates}})
 
     async def update_tenant(self, tenant_id: str, updates: Dict[str, Any]) -> None:
         updates["updated_at"] = datetime.now(timezone.utc)
-        oid = ObjectId(tenant_id) if ObjectId.is_valid(tenant_id) else tenant_id
-        await tenants_collection.update_one({"_id": oid}, {"$set": updates})
+        candidates = [str(tenant_id)]
+        if ObjectId.is_valid(tenant_id):
+            candidates.append(ObjectId(tenant_id))
+        await tenants_collection.update_one({"_id": {"$in": candidates}}, {"$set": updates})
 
     async def get_invite_by_hash(self, token_hash: str) -> Optional[Dict[str, Any]]:
         return await invites_collection.find_one({"token_hash": token_hash, "status": "pending"})
